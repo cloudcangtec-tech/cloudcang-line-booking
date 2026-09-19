@@ -38,16 +38,41 @@ scripts/
 
 ## 快速開始
 
-需要一個 [Cloudflare 帳號](https://dash.cloudflare.com/sign-up)（免費方案即可）與 Node.js。
+需要一個 [Cloudflare 帳號](https://dash.cloudflare.com/sign-up)（免費方案即可）。有兩種部署方式：
+
+- **方法一：一鍵部署**——不用裝任何東西、不用碰終端機，直接用瀏覽器完成
+- **方法二：命令列部署**——用 `wrangler` CLI，步驟比較多但每一步都在自己掌控中
+
+兩種方法完成部署後，都一樣要接著執行「開啟 `/setup` 完成初始化」那一步。
+
+### 方法一：一鍵部署到 Cloudflare
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudcangtec-tech/cloudcang-line-booking)
+
+點下按鈕後，會請你用 GitHub 帳號登入、把這個 repo fork 一份到你自己的帳號下，再連結你的 Cloudflare 帳號，接著自動建立資源並部署。
+
+> **注意**：一鍵部署只會幫你把程式碼跑起來，**不會自動套用資料庫結構（migrations）**。部署完成、還沒開啟 `/setup` 之前，請先到 Cloudflare Dashboard 找到剛建立的 D1 資料庫，或用以下指令手動套用一次：
+>
+> ```bash
+> npx wrangler login
+> npx wrangler d1 execute <你的 D1 資料庫名稱> --remote --file=migrations/0001_init.sql
+> # 依序把 migrations/ 資料夾裡的 .sql 檔案都執行一次
+> ```
+>
+> 如果一鍵部署過程沒有自動建立 D1 資料庫，或是 `wrangler.toml` 裡的 `database_id` 沒有被自動填上，請改用下面「方法二」自己建立 D1 並手動填上 `database_id` 後再部署一次。
+
+### 方法二：命令列部署
+
+需要 Node.js。
 
 ```bash
-git clone <這個 repo 的網址>
-cd cloudcang-booking-template
+git clone https://github.com/cloudcangtec-tech/cloudcang-line-booking.git
+cd cloudcang-line-booking
 npm install
 npx wrangler login
 ```
 
-### 1. 建立你自己的 D1 資料庫
+#### 1. 建立你自己的 D1 資料庫
 
 ```bash
 npx wrangler d1 create cloudcang-booking-template
@@ -55,7 +80,7 @@ npx wrangler d1 create cloudcang-booking-template
 
 把印出來的 `database_id` 貼到 [wrangler.toml](wrangler.toml) 的 `database_id` 欄位，取代 `REPLACE_WITH_YOUR_OWN_D1_DATABASE_ID`。
 
-### 2. 套用資料庫結構
+#### 2. 套用資料庫結構
 
 ```bash
 for f in migrations/*.sql; do
@@ -63,7 +88,7 @@ for f in migrations/*.sql; do
 done
 ```
 
-### 3. 部署
+#### 3. 部署
 
 ```bash
 npx wrangler deploy
@@ -71,7 +96,7 @@ npx wrangler deploy
 
 完成後會拿到一個 `*.workers.dev` 網址。
 
-### 4. 開啟 `/setup` 完成初始化
+### 開啟 `/setup` 完成初始化
 
 打開 `https://你的網址/setup`，照畫面填寫：
 
