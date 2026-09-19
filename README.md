@@ -51,12 +51,11 @@ scripts/
 
 點下按鈕後，會請你用 GitHub 帳號登入、把這個 repo fork 一份到你自己的帳號下，再連結你的 Cloudflare 帳號，接著自動建立資源並部署。
 
-> **注意**：一鍵部署只會幫你把程式碼跑起來，**不會自動套用資料庫結構（migrations）**。部署完成、還沒開啟 `/setup` 之前，請先到 Cloudflare Dashboard 找到剛建立的 D1 資料庫，或用以下指令手動套用一次：
+> **注意**：`npm run deploy`（見 [package.json](package.json)）已經改成「先套用資料庫結構、再部署」兩步驟一起做，如果 Cloudflare 的建置流程是執行這個指令，資料庫結構會自動套用，不用另外手動處理。但一鍵部署的建置流程细節不是我們能完全控制的，如果開啟 `/setup` 時出現資料庫錯誤，代表資料庫結構還沒套用，請手動執行一次：
 >
 > ```bash
 > npx wrangler login
-> npx wrangler d1 execute <你的 D1 資料庫名稱> --remote --file=migrations/0001_init.sql
-> # 依序把 migrations/ 資料夾裡的 .sql 檔案都執行一次
+> npx wrangler d1 migrations apply cloudcang-booking-template --remote
 > ```
 >
 > 如果一鍵部署過程沒有自動建立 D1 資料庫，或是 `wrangler.toml` 裡的 `database_id` 沒有被自動填上，請改用下面「方法二」自己建立 D1 並手動填上 `database_id` 後再部署一次。
@@ -80,21 +79,13 @@ npx wrangler d1 create cloudcang-booking-template
 
 把印出來的 `database_id` 貼到 [wrangler.toml](wrangler.toml) 的 `database_id` 欄位，取代 `REPLACE_WITH_YOUR_OWN_D1_DATABASE_ID`。
 
-#### 2. 套用資料庫結構
+#### 2. 套用資料庫結構並部署
 
 ```bash
-for f in migrations/*.sql; do
-  npx wrangler d1 execute cloudcang-booking-template --remote --file="$f"
-done
+npm run deploy
 ```
 
-#### 3. 部署
-
-```bash
-npx wrangler deploy
-```
-
-完成後會拿到一個 `*.workers.dev` 網址。
+這個指令會先套用 `migrations/` 裡的資料庫結構，再部署程式碼，完成後會拿到一個 `*.workers.dev` 網址。（只想單獨套用資料庫結構，不部署程式碼的話，可以用 `npm run migrate`。）
 
 ### 開啟 `/setup` 完成初始化
 

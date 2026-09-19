@@ -58,7 +58,7 @@
         </a>
       </p>
       <div class="note">
-        <b>注意：</b>一鍵部署只會幫你把程式碼跑起來，<b>不會自動套用資料庫結構（migrations）</b>。部署完成、開啟 <code>/setup</code> 之前，請先用 <code>npx wrangler d1 execute &lt;你的 D1 資料庫名稱&gt; --remote --file=migrations/檔名.sql</code> 把 <code>migrations/</code> 資料夾裡的檔案依序執行一次。如果一鍵部署沒有自動建立 D1 資料庫，或 <code>wrangler.toml</code> 的 <code>database_id</code> 沒被填上，請改用下面「方法二」自行建立。
+        <b>注意：</b><code>npm run deploy</code> 已經改成「先套用資料庫結構、再部署」一起做，如果 Cloudflare 的建置流程是執行這個指令，資料庫結構會自動套用。但一鍵部署的建置細節不是我們能完全控制的，如果開啟 <code>/setup</code> 時出現資料庫錯誤，代表結構還沒套用，請手動執行一次 <code>npx wrangler d1 migrations apply cloudcang-booking-template --remote</code>。如果一鍵部署沒有自動建立 D1 資料庫，或 <code>wrangler.toml</code> 的 <code>database_id</code> 沒被填上，請改用下面「方法二」自行建立。
       </div>
 
       <h3 style="margin-top:2.5rem;">方法二：命令列部署</h3>
@@ -76,16 +76,9 @@ npx wrangler login</pre>
           <p>指令會印出一個 <code>database_id</code>，把它貼到 <code>wrangler.toml</code> 的 <code>database_id</code> 欄位（原本是 <code>REPLACE_WITH_YOUR_OWN_D1_DATABASE_ID</code> 這個佔位字串）。</p>
         </li>
         <li>
-          <h3>套用資料庫結構</h3>
-          <pre>for f in migrations/*.sql; do
-  npx wrangler d1 execute cloudcang-booking-template --remote --file="$f"
-done</pre>
-          <p>依序執行 <code>migrations/</code> 裡所有的 <code>.sql</code> 檔案。</p>
-        </li>
-        <li>
-          <h3>部署</h3>
-          <pre>npx wrangler deploy</pre>
-          <p>完成後會拿到一個 <code>*.workers.dev</code> 網址。</p>
+          <h3>套用資料庫結構並部署</h3>
+          <pre>npm run deploy</pre>
+          <p>會先套用 <code>migrations/</code> 裡的資料庫結構，再部署程式碼，完成後會拿到一個 <code>*.workers.dev</code> 網址。</p>
         </li>
       </ol>
 
