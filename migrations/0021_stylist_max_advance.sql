@@ -1,0 +1,1 @@
+ALTER TABLE stylists ADD COLUMN max_advance_days INTEGER NOT NULL DEFAULT 60;
