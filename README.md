@@ -108,6 +108,34 @@ npm run deploy
 
 沒有串接 LINE 也能純用後台手動建立與管理預約。
 
+## 更新版本
+
+這個範本之後會持續修正問題、新增功能。你的站名、LINE 金鑰、服務項目、員工班表等個人化設定都存在你自己的 D1 資料庫裡，不是寫在程式碼檔案中，所以更新程式碼通常不會影響到你已經設定好的資料，衝突風險很低。
+
+### 第一次更新前，先把原始 repo 設為 upstream（只需要做一次）
+
+```bash
+git remote add upstream https://github.com/cloudcangtec-tech/cloudcang-line-booking.git
+```
+
+### 之後每次要更新，重複這個流程即可
+
+```bash
+git fetch upstream
+git merge upstream/main
+npm run deploy
+```
+
+`npm run deploy` 會先套用新的資料庫結構變更（如果這次更新有新增 migration），再部署最新程式碼。
+
+### 如果你是用「一鍵部署」接 GitHub 的
+
+Cloudflare Workers Builds 會自動追蹤你 fork 的 repo，`git merge` 完後只要 `git push`，Cloudflare 就會自動重新部署，不用再手動跑 `npm run deploy`。
+
+### 如果 `git merge` 出現衝突
+
+通常代表你自己手動改過原始碼檔案（例如自己調整過 CSS 或版面），這種情況下 Git 會在衝突的檔案裡標出 `<<<<<<<` `=======` `>>>>>>>` 的區塊，手動決定要保留哪一段、刪掉標記後存檔，再 `git add` 、`git commit` 完成合併即可。如果不確定怎麼處理，建議備份整個資料夾後再操作，或先在本機測試環境（`npm run dev`）確認沒問題再部署到正式環境。
+
 ## 安全建議
 
 - 如果對外公開使用，建議設定 Cloudflare Turnstile 機器人驗證（後台「第三方串接」頁面），同時保護後台登入與客人預約頁
