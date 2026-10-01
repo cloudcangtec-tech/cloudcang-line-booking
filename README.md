@@ -57,16 +57,35 @@ scripts/
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudcangtec-tech/cloudcang-line-booking)
 
-點下按鈕後，會請你用 GitHub 帳號登入、把這個 repo fork 一份到你自己的帳號下，再連結你的 Cloudflare 帳號，接著自動建立資源並部署。
+點下按鈕後，會請你用 GitHub 帳號登入、把這個 repo 複製一份到你自己的帳號下（這是獨立的新 repo，之後這個範本有更新不會自動同步過去），再連結你的 Cloudflare 帳號、選擇或建立 D1 資料庫，接著自動建置並部署。
 
-> **注意**：`npm run deploy`（見 [package.json](package.json)）已經改成「先套用資料庫結構、再部署」兩步驟一起做，如果 Cloudflare 的建置流程是執行這個指令，資料庫結構會自動套用，不用另外手動處理。但一鍵部署的建置流程细節不是我們能完全控制的，如果開啟 `/setup` 時出現資料庫錯誤，代表資料庫結構還沒套用，請手動執行一次：
+> **注意：第一次建置幾乎一定會失敗，這是正常現象，不代表你哪裡做錯了。**
 >
-> ```bash
-> npx wrangler login
-> npx wrangler d1 migrations apply cloudcang-booking-template --remote
-> ```
+> 原因：設定畫面裡的「Select D1 資料庫」只會幫你**建立**一個 D1 資料庫，但不會把它的 `database_id` 寫回 repo 裡的 `wrangler.toml`——檔案裡還是原本的佔位字串 `REPLACE_WITH_YOUR_OWN_D1_DATABASE_ID`，所以第一次建置一定會在 `wrangler d1 migrations apply` 或 `wrangler deploy` 這一步失敗（錯誤訊息通常是 `Couldn't find a D1 DB` 或 `must have a valid database_id`）。
 >
-> 如果一鍵部署過程沒有自動建立 D1 資料庫，或是 `wrangler.toml` 裡的 `database_id` 沒有被自動填上，請改用下面「方法二」自己建立 D1 並手動填上 `database_id` 後再部署一次。
+> **修復步驟（做完後重新觸發一次建置就會成功）：**
+>
+> 1. 到 Cloudflare Dashboard → **Workers & Pages → D1**，找到剛剛建立的那個資料庫（名稱通常跟你的專案名稱一樣），點進去複製完整的 **UUID**
+> 2. 到你複製出來的那個新 repo（例如 `你的帳號/你的專案名稱`），編輯 `wrangler.toml`，把：
+>    ```toml
+>    [[d1_databases]]
+>    binding = "DB"
+>    database_name = "cloudcang-booking-template"
+>    database_id = "REPLACE_WITH_YOUR_OWN_D1_DATABASE_ID"
+>    ```
+>    改成你自己的資料庫名稱與剛才複製的 UUID，例如：
+>    ```toml
+>    [[d1_databases]]
+>    binding = "DB"
+>    database_name = "你的專案名稱"
+>    database_id = "剛才複製的UUID"
+>    ```
+>    直接在 GitHub 網頁上編輯這個檔案、commit 即可，不需要在自己電腦上操作
+> 3. commit 之後 Cloudflare Workers Builds 會自動偵測到新的 push 並重新建置，這次就會成功
+>
+> 建置紀錄裡如果出現「Failed to match Worker name...」的黃色警告，不會導致部署失敗，可以忽略。
+>
+> 如果想完全避開這個手動修復步驟，改用下面「方法二：命令列部署」，資料庫建立跟填 `database_id` 是同一時間在自己電腦上完成，不會遇到這個問題。
 
 ### 方法二：命令列部署
 
