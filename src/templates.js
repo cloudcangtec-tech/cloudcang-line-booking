@@ -1652,7 +1652,7 @@ export function shopProfilePage({ profile, banners, portfolio, saved, error, max
     ${saved ? `<p class="success-msg">已儲存。</p>` : ""}
     ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
     <p style="color:var(--ink-soft); font-size:0.88rem; max-width:70ch; margin-bottom:1.5rem;">
-      這些設定會顯示在客人看到的線上預約頁（/liff/booking）上，用來展示店家資訊與作品。
+      這些設定會顯示在客人看到的線上預約頁（首頁 /）上，用來展示店家資訊與作品。
     </p>
 
     <div class="panel" style="margin-bottom:1.5rem;">

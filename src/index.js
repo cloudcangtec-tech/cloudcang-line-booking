@@ -2596,7 +2596,7 @@ export default {
     if (path === "/my-booking" && method === "GET") return handleMyBookingPage(request, env, url);
     if (path === "/my-booking/cancel" && method === "POST") return handleCancelMyBooking(request, env, url);
     if (path === "/my-booking/reschedule" && method === "POST") return handleRescheduleMyBooking(request, env, url);
-    if (path === "/liff/booking" && method === "GET") {
+    if ((path === "/" || path === "/liff/booking") && method === "GET") {
       const liffId = await getLineSetting(env, "LIFF_ID");
       const turnstileSiteKey = await getLineSetting(env, "TURNSTILE_SITE_KEY");
       const shopValues = await getAllLineSettings(env);
