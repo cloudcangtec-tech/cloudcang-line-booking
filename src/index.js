@@ -2,16 +2,21 @@ import { hashPassword, verifyPassword, newSessionId, parseCookies, getAuthedAdmi
 import { verifyLineSignature, replyMessage, pushMessage } from "./line.js";
 import {
   loginPage, adminLayout, dashboardPage, bookingsPage, newBookingPage,
-  customersPage, servicesPage, slotsPage, stylistsPage, stylistSchedulePage, settingsPage, accountPage, accountsPage, resetAccountPasswordPage,
+  customersPage, servicesPage, addonsPage, slotsPage, stylistsPage, stylistSchedulePage, settingsPage, accountPage, accountsPage, resetAccountPasswordPage,
   loginHistoryPage, lineMessageLogPage, setupPage, setupDonePage, setupSuccessPage,
   messagesPage, liffBookingPage, myBookingPage, auditLogPage, AUDIT_ACTION_LABELS,
-  closedDatesPage, reportsPage, escapeHtml,
+  closedDatesPage, reportsPage, escapeHtml, shopProfilePage, lineRichMenuPage,
 } from "./templates.js";
 import { getLineSetting, getAllLineSettings, setLineSetting, maskSecret, LINE_SETTING_KEYS } from "./settings.js";
 import {
   getTemplate, getAllTemplates, saveTemplate, buildLineMessage, TEMPLATE_KEYS, TEMPLATE_LABELS,
   saveTemplateImage, deleteTemplateImage, getTemplateImage,
 } from "./messages.js";
+import {
+  MAX_BANNERS, getLogo, hasLogo, saveLogo, deleteLogo,
+  listBanners, getBannerImage, saveBanner, deleteBanner, moveBanner,
+  listPortfolio, getPortfolioImage, savePortfolioImage, deletePortfolioImage, movePortfolioImage,
+} from "./shop.js";
 
 const SESSION_MAX_AGE = 60 * 60 * 8; // 8 小時
 const LOGIN_WINDOW_MINUTES = 15;
@@ -428,7 +433,9 @@ async function handleAdminBookings(request, env, admin, url) {
             t.slot_date, t.slot_time, s.name as service_name, st.name as stylist_name,
             (SELECT COUNT(*) FROM bookings b2 WHERE b2.id != b.id AND b2.status IN ('pending','confirmed')
                AND (b2.customer_phone = b.customer_phone OR (b.line_user_id IS NOT NULL AND b2.line_user_id = b.line_user_id))
-            ) as dup_count
+            ) as dup_count,
+            (SELECT GROUP_CONCAT(name_snapshot, '、') FROM booking_addons ba WHERE ba.booking_id = b.id) as addon_names,
+            (SELECT COALESCE(SUM(price_snapshot), 0) FROM booking_addons ba WHERE ba.booking_id = b.id) as addon_total
      FROM bookings b
      JOIN time_slots t ON t.id = b.time_slot_id
      JOIN service_types s ON s.id = t.service_type_id
@@ -438,7 +445,16 @@ async function handleAdminBookings(request, env, admin, url) {
      ORDER BY ${orderBy}`
   ).bind(...binds).all();
 
-  const body = bookingsPage(results, { range, status, q, dateFrom, dateTo });
+  const statsRow = await env.DB.prepare(
+    `SELECT
+       SUM(CASE WHEN t.slot_date = ? AND b.status IN ('pending','confirmed') THEN 1 ELSE 0 END) as today_total,
+       SUM(CASE WHEN t.slot_date = ? AND b.status = 'pending' THEN 1 ELSE 0 END) as today_pending,
+       SUM(CASE WHEN t.slot_date = ? AND b.status = 'confirmed' THEN 1 ELSE 0 END) as today_confirmed,
+       SUM(CASE WHEN t.slot_date BETWEEN ? AND ? AND b.status IN ('pending','confirmed') THEN 1 ELSE 0 END) as week_total
+     FROM bookings b JOIN time_slots t ON t.id = b.time_slot_id`
+  ).bind(today, today, today, today, weekEnd).first();
+
+  const body = bookingsPage(results, { range, status, q, dateFrom, dateTo, stats: statsRow });
   return new Response(adminLayout("預約管理", escapeHtml(admin.username), body, "bookings", admin.role), {
     headers: { "Content-Type": "text/html; charset=utf-8" },
   });
@@ -866,8 +882,22 @@ async function handleCreateService(request, env, admin) {
   const name = String(form.get("name") || "").trim().slice(0, 100);
   const duration = parseInt(form.get("duration"), 10);
   if (!name || !duration || duration < 5) return new Response("Invalid input", { status: 400 });
-  await env.DB.prepare(`INSERT INTO service_types (name, duration_minutes) VALUES (?, ?)`).bind(name, duration).run();
+  const rawPrice = String(form.get("price") || "").trim();
+  const price = rawPrice ? parseInt(rawPrice, 10) : null;
+  const description = String(form.get("description") || "").trim().slice(0, 500);
+  await env.DB.prepare(`INSERT INTO service_types (name, duration_minutes, price, description) VALUES (?, ?, ?, ?)`).bind(name, duration, price, description || null).run();
   await writeAuditLog(env, admin.username, "create_service", name, `duration=${duration}`);
+  return redirectTo("/admin/services");
+}
+
+async function handleUpdateService(request, env, admin, serviceId) {
+  if (!isSameOrigin(request)) return new Response("Forbidden", { status: 403 });
+  const form = await request.formData();
+  const rawPrice = String(form.get("price") || "").trim();
+  const price = rawPrice ? parseInt(rawPrice, 10) : null;
+  const description = String(form.get("description") || "").trim().slice(0, 500);
+  await env.DB.prepare(`UPDATE service_types SET price = ?, description = ? WHERE id = ?`).bind(price, description || null, serviceId).run();
+  await writeAuditLog(env, admin.username, "update_service", `service:${serviceId}`, null);
   return redirectTo("/admin/services");
 }
 
@@ -900,6 +930,62 @@ async function handleDeleteService(request, env, admin, serviceId) {
   await env.DB.prepare(`DELETE FROM service_types WHERE id = ?`).bind(serviceId).run();
   await writeAuditLog(env, admin.username, "delete_service", service ? service.name : `service:${serviceId}`, usage.cnt > 0 ? `cascade_deleted_slots_and_bookings=${usage.cnt}` : null);
   return redirectTo("/admin/services");
+}
+
+// ---------- 加購項目 ----------
+async function handleAdminAddons(request, env, admin, error) {
+  const { results } = await env.DB.prepare(`SELECT * FROM service_addons ORDER BY sort_order ASC, id ASC`).all();
+  const body = addonsPage(results, error);
+  return new Response(adminLayout("加購項目", escapeHtml(admin.username), body, "addons", admin.role), {
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
+async function handleCreateAddon(request, env, admin) {
+  if (!isSameOrigin(request)) return new Response("Forbidden", { status: 403 });
+  const form = await request.formData();
+  const name = String(form.get("name") || "").trim().slice(0, 100);
+  const price = parseInt(form.get("price"), 10);
+  const category = String(form.get("category") || "").trim().slice(0, 60);
+  if (!name || isNaN(price) || price < 0) return new Response("Invalid input", { status: 400 });
+  const maxOrder = await env.DB.prepare(`SELECT MAX(sort_order) as m FROM service_addons`).first();
+  await env.DB.prepare(`INSERT INTO service_addons (name, price, category, sort_order) VALUES (?, ?, ?, ?)`)
+    .bind(name, price, category || null, (maxOrder.m ?? -1) + 1).run();
+  await writeAuditLog(env, admin.username, "create_addon", name, `price=${price}`);
+  return redirectTo("/admin/addons");
+}
+
+async function handleUpdateAddon(request, env, admin, addonId) {
+  if (!isSameOrigin(request)) return new Response("Forbidden", { status: 403 });
+  const form = await request.formData();
+  const price = parseInt(form.get("price"), 10);
+  const category = String(form.get("category") || "").trim().slice(0, 60);
+  if (isNaN(price) || price < 0) return new Response("Invalid input", { status: 400 });
+  await env.DB.prepare(`UPDATE service_addons SET price = ?, category = ? WHERE id = ?`).bind(price, category || null, addonId).run();
+  await writeAuditLog(env, admin.username, "update_addon", `addon:${addonId}`, null);
+  return redirectTo("/admin/addons");
+}
+
+async function handleToggleAddon(request, env, admin, addonId) {
+  if (!isSameOrigin(request)) return new Response("Forbidden", { status: 403 });
+  await env.DB.prepare(`UPDATE service_addons SET active = NOT active WHERE id = ?`).bind(addonId).run();
+  await writeAuditLog(env, admin.username, "toggle_addon", `addon:${addonId}`, null);
+  return redirectTo("/admin/addons");
+}
+
+async function handleDeleteAddon(request, env, admin, addonId) {
+  if (!isSameOrigin(request)) return new Response("Forbidden", { status: 403 });
+  const addon = await env.DB.prepare(`SELECT name FROM service_addons WHERE id = ?`).bind(addonId).first();
+  await env.DB.prepare(`DELETE FROM service_addons WHERE id = ?`).bind(addonId).run();
+  await writeAuditLog(env, admin.username, "delete_addon", addon ? addon.name : `addon:${addonId}`, null);
+  return redirectTo("/admin/addons");
+}
+
+async function handlePublicAddons(request, env) {
+  const { results } = await env.DB.prepare(
+    `SELECT id, name, price, category FROM service_addons WHERE active = 1 ORDER BY sort_order ASC, id ASC`
+  ).all();
+  return Response.json({ ok: true, addons: results });
 }
 
 // ---------- 服務人員 ----------
@@ -944,7 +1030,11 @@ async function handleDeleteStylist(request, env, admin, stylistId) {
 const WEEKDAY_LABELS_1_7 = { 1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "日" };
 
 async function handleStylistSchedulePage(request, env, admin, stylistId, error, saved) {
-  const stylist = await env.DB.prepare(`SELECT * FROM stylists WHERE id = ?`).bind(stylistId).first();
+  const stylist = await env.DB.prepare(
+    `SELECT id, name, active, created_at, auto_schedule, buffer_minutes, slot_step_minutes, max_advance_days, bio,
+     CASE WHEN photo_data IS NOT NULL THEN 1 ELSE 0 END as has_photo
+     FROM stylists WHERE id = ?`
+  ).bind(stylistId).first();
   if (!stylist) return new Response("Not Found", { status: 404 });
 
   const { results: rules } = await env.DB.prepare(
@@ -1034,6 +1124,52 @@ async function handleUpdateStylistSchedule(request, env, admin, stylistId) {
 
   await writeAuditLog(env, admin.username, "update_stylist_schedule", stylist.name, `auto=${autoSchedule}`);
   return redirectTo(`/admin/stylists/${stylistId}/schedule?saved=1`);
+}
+
+async function handleUpdateStylistProfile(request, env, admin, stylistId) {
+  if (!isSameOrigin(request)) return new Response("Forbidden", { status: 403 });
+  const form = await request.formData();
+  const bio = String(form.get("bio") || "").trim().slice(0, 500);
+  await env.DB.prepare(`UPDATE stylists SET bio = ? WHERE id = ?`).bind(bio || null, stylistId).run();
+  await writeAuditLog(env, admin.username, "update_stylist_profile", `stylist:${stylistId}`, null);
+  return redirectTo(`/admin/stylists/${stylistId}/schedule?saved=1`);
+}
+
+const STYLIST_PHOTO_MAX_BYTES = 1.5 * 1024 * 1024;
+const STYLIST_PHOTO_ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+async function handleUploadStylistPhoto(request, env, admin, stylistId) {
+  if (!isSameOrigin(request)) return new Response("Forbidden", { status: 403 });
+  const form = await request.formData();
+  const file = form.get("image");
+  if (!file || typeof file === "string") return redirectTo(`/admin/stylists/${stylistId}/schedule`);
+  if (!STYLIST_PHOTO_ALLOWED_TYPES.includes(file.type)) {
+    return handleStylistSchedulePage(request, env, admin, stylistId, "只支援 JPG / PNG / WebP 格式的圖片。", false);
+  }
+  const buffer = await file.arrayBuffer();
+  if (buffer.byteLength > STYLIST_PHOTO_MAX_BYTES) {
+    return handleStylistSchedulePage(request, env, admin, stylistId, "圖片檔案太大，請壓縮到 1.5MB 以內再上傳。", false);
+  }
+  await env.DB.prepare(`UPDATE stylists SET photo_data = ?, photo_content_type = ? WHERE id = ?`)
+    .bind(new Uint8Array(buffer), file.type, stylistId).run();
+  await writeAuditLog(env, admin.username, "upload_stylist_photo", `stylist:${stylistId}`, null);
+  return redirectTo(`/admin/stylists/${stylistId}/schedule?saved=1`);
+}
+
+async function handleDeleteStylistPhoto(request, env, admin, stylistId) {
+  if (!isSameOrigin(request)) return new Response("Forbidden", { status: 403 });
+  await env.DB.prepare(`UPDATE stylists SET photo_data = NULL, photo_content_type = NULL WHERE id = ?`).bind(stylistId).run();
+  await writeAuditLog(env, admin.username, "delete_stylist_photo", `stylist:${stylistId}`, null);
+  return redirectTo(`/admin/stylists/${stylistId}/schedule?saved=1`);
+}
+
+async function handleServeStylistPhoto(request, env, id) {
+  const row = await env.DB.prepare(`SELECT photo_data, photo_content_type FROM stylists WHERE id = ?`).bind(id).first();
+  if (!row || !row.photo_data) return new Response("Not Found", { status: 404 });
+  const bytes = new Uint8Array(row.photo_data);
+  return new Response(bytes, {
+    headers: { "Content-Type": row.photo_content_type || "image/jpeg", "Cache-Control": "public, max-age=600", "Content-Length": String(bytes.byteLength) },
+  });
 }
 
 // 計算某位「自動排程」服務人員在指定日期、指定服務項目下，還能預約的起始時間清單
@@ -1168,7 +1304,8 @@ async function handleAdminSlots(request, env, admin, url) {
   for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
 
   const { results: daySlots } = await env.DB.prepare(
-    `SELECT t.id, t.slot_time, t.capacity, t.booked_count, t.active, t.stylist_id, s.name as service_name, st.name as stylist_name
+    `SELECT t.id, t.slot_time, t.capacity, t.booked_count, t.active, t.stylist_id, s.name as service_name, st.name as stylist_name,
+            (SELECT COUNT(*) FROM bookings b WHERE b.time_slot_id = t.id AND b.status = 'cancelled') as cancelled_count
      FROM time_slots t
      JOIN service_types s ON s.id = t.service_type_id
      LEFT JOIN stylists st ON st.id = t.stylist_id
@@ -1477,6 +1614,155 @@ async function handleServeTemplateImage(request, env, key) {
   });
 }
 
+async function handleShopProfilePage(request, env, admin, saved, error) {
+  const values = await getAllLineSettings(env);
+  const profile = {
+    SHOP_TAGLINE: values.SHOP_TAGLINE,
+    SHOP_ABOUT: values.SHOP_ABOUT,
+    SHOP_ANNOUNCEMENT: values.SHOP_ANNOUNCEMENT,
+    SHOP_THEME_COLOR: values.SHOP_THEME_COLOR,
+    SHOP_SOCIAL_LINKS: values.SHOP_SOCIAL_LINKS,
+    SHOP_HOURS: values.SHOP_HOURS,
+    SHOP_PHONE: values.SHOP_PHONE,
+  };
+  const banners = await listBanners(env);
+  const portfolio = await listPortfolio(env);
+  const logoExists = await hasLogo(env);
+  const body = shopProfilePage({ profile, banners, portfolio, saved, error, maxBanners: MAX_BANNERS, hasLogo: logoExists });
+  return new Response(adminLayout("店面設計", escapeHtml(admin.username), body, "shop", admin.role), {
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
+async function handleLineRichMenuPage(request, env, admin) {
+  const liffId = await getLineSetting(env, "LIFF_ID");
+  const body = lineRichMenuPage({ liffId });
+  return new Response(adminLayout("圖文選單", escapeHtml(admin.username), body, "richmenu", admin.role), {
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
+async function handleUpdateShopProfile(request, env, admin) {
+  if (!isSameOrigin(request)) return new Response("Forbidden", { status: 403 });
+  const form = await request.formData();
+  await setLineSetting(env, "SHOP_TAGLINE", String(form.get("tagline") || "").trim());
+  await setLineSetting(env, "SHOP_ANNOUNCEMENT", String(form.get("announcement") || "").trim());
+  await setLineSetting(env, "SHOP_THEME_COLOR", String(form.get("themeColor") || "").trim());
+  await setLineSetting(env, "SHOP_ABOUT", String(form.get("about") || "").trim());
+  await setLineSetting(env, "SHOP_HOURS", String(form.get("hours") || "").trim());
+  await setLineSetting(env, "SHOP_PHONE", String(form.get("phone") || "").trim());
+  const social = {
+    line: String(form.get("socialLine") || "").trim(),
+    ig: String(form.get("socialIg") || "").trim(),
+    fb: String(form.get("socialFb") || "").trim(),
+  };
+  await setLineSetting(env, "SHOP_SOCIAL_LINKS", JSON.stringify(social));
+  await writeAuditLog(env, admin.username, "update_shop_profile", null, null);
+  return redirectTo("/admin/shop?saved=1");
+}
+
+async function handleUploadBanner(request, env, admin) {
+  if (!isSameOrigin(request)) return new Response("Forbidden", { status: 403 });
+  const form = await request.formData();
+  const file = form.get("image");
+  if (!file || typeof file === "string") return redirectTo("/admin/shop");
+  const result = await saveBanner(env, file);
+  if (!result.ok) {
+    return handleShopProfilePage(request, env, admin, false, result.error);
+  }
+  await writeAuditLog(env, admin.username, "upload_shop_banner", null, null);
+  return redirectTo("/admin/shop?saved=1");
+}
+
+async function handleDeleteBanner(request, env, admin, id) {
+  if (!isSameOrigin(request)) return new Response("Forbidden", { status: 403 });
+  await deleteBanner(env, id);
+  await writeAuditLog(env, admin.username, "delete_shop_banner", String(id), null);
+  return redirectTo("/admin/shop?saved=1");
+}
+
+async function handleMoveBanner(request, env, admin, id) {
+  if (!isSameOrigin(request)) return new Response("Forbidden", { status: 403 });
+  const form = await request.formData();
+  await moveBanner(env, id, String(form.get("direction") || ""));
+  return redirectTo("/admin/shop?saved=1");
+}
+
+async function handleUploadPortfolio(request, env, admin) {
+  if (!isSameOrigin(request)) return new Response("Forbidden", { status: 403 });
+  const form = await request.formData();
+  const file = form.get("image");
+  if (!file || typeof file === "string") return redirectTo("/admin/shop");
+  const caption = String(form.get("caption") || "").trim();
+  const result = await savePortfolioImage(env, file, caption);
+  if (!result.ok) {
+    return handleShopProfilePage(request, env, admin, false, result.error);
+  }
+  await writeAuditLog(env, admin.username, "upload_shop_portfolio", null, null);
+  return redirectTo("/admin/shop?saved=1");
+}
+
+async function handleDeletePortfolio(request, env, admin, id) {
+  if (!isSameOrigin(request)) return new Response("Forbidden", { status: 403 });
+  await deletePortfolioImage(env, id);
+  await writeAuditLog(env, admin.username, "delete_shop_portfolio", String(id), null);
+  return redirectTo("/admin/shop?saved=1");
+}
+
+async function handleMovePortfolio(request, env, admin, id) {
+  if (!isSameOrigin(request)) return new Response("Forbidden", { status: 403 });
+  const form = await request.formData();
+  await movePortfolioImage(env, id, String(form.get("direction") || ""));
+  return redirectTo("/admin/shop?saved=1");
+}
+
+async function handleUploadLogo(request, env, admin) {
+  if (!isSameOrigin(request)) return new Response("Forbidden", { status: 403 });
+  const form = await request.formData();
+  const file = form.get("image");
+  if (!file || typeof file === "string") return redirectTo("/admin/shop");
+  const result = await saveLogo(env, file);
+  if (!result.ok) {
+    return handleShopProfilePage(request, env, admin, false, result.error);
+  }
+  await writeAuditLog(env, admin.username, "upload_shop_logo", null, null);
+  return redirectTo("/admin/shop?saved=1");
+}
+
+async function handleDeleteLogo(request, env, admin) {
+  if (!isSameOrigin(request)) return new Response("Forbidden", { status: 403 });
+  await deleteLogo(env);
+  await writeAuditLog(env, admin.username, "delete_shop_logo", null, null);
+  return redirectTo("/admin/shop?saved=1");
+}
+
+async function handleServeLogo(request, env) {
+  const row = await getLogo(env);
+  if (!row || !row.image_data) return new Response("Not Found", { status: 404 });
+  const bytes = new Uint8Array(row.image_data);
+  return new Response(bytes, {
+    headers: { "Content-Type": row.image_content_type || "image/jpeg", "Cache-Control": "public, max-age=600", "Content-Length": String(bytes.byteLength) },
+  });
+}
+
+async function handleServeBannerImage(request, env, id) {
+  const row = await getBannerImage(env, id);
+  if (!row || !row.image_data) return new Response("Not Found", { status: 404 });
+  const bytes = new Uint8Array(row.image_data);
+  return new Response(bytes, {
+    headers: { "Content-Type": row.image_content_type || "image/jpeg", "Cache-Control": "public, max-age=600", "Content-Length": String(bytes.byteLength) },
+  });
+}
+
+async function handleServePortfolioImage(request, env, id) {
+  const row = await getPortfolioImage(env, id);
+  if (!row || !row.image_data) return new Response("Not Found", { status: 404 });
+  const bytes = new Uint8Array(row.image_data);
+  return new Response(bytes, {
+    headers: { "Content-Type": row.image_content_type || "image/jpeg", "Cache-Control": "public, max-age=600", "Content-Length": String(bytes.byteLength) },
+  });
+}
+
 function validateAdminLoginPath(value) {
   if (!/^\/[a-zA-Z0-9-]{5,40}$/.test(value)) {
     return "自訂路徑必須以 / 開頭，後面接 5~40 個英文字母、數字或連字號（-）。";
@@ -1770,7 +2056,7 @@ async function handleResetAccountPassword(request, env, admin, targetId) {
 // ---------- 公開 API（客人端） ----------
 async function handlePublicServices(request, env) {
   const { results } = await env.DB.prepare(
-    `SELECT id, name FROM service_types WHERE active = 1 ORDER BY id ASC`
+    `SELECT id, name, price, description, duration_minutes FROM service_types WHERE active = 1 ORDER BY id ASC`
   ).all();
   return Response.json({ ok: true, services: results });
 }
@@ -1782,7 +2068,7 @@ async function handlePublicStylists(request, env) {
   const today = taipeiTodayStr();
 
   const { results: manualStylists } = await env.DB.prepare(
-    `SELECT DISTINCT st.id, st.name FROM time_slots t
+    `SELECT DISTINCT st.id, st.name, st.bio, (CASE WHEN st.photo_data IS NOT NULL THEN 1 ELSE 0 END) as has_photo FROM time_slots t
      JOIN stylists st ON st.id = t.stylist_id
      WHERE t.service_type_id = ? AND t.active = 1 AND t.booked_count < t.capacity
            AND t.slot_date >= ? AND st.active = 1 AND st.auto_schedule = 0
@@ -1790,7 +2076,7 @@ async function handlePublicStylists(request, env) {
   ).bind(serviceTypeId, today).all();
 
   const { results: autoStylists } = await env.DB.prepare(
-    `SELECT DISTINCT st.id, st.name, st.max_advance_days FROM stylist_services ss
+    `SELECT DISTINCT st.id, st.name, st.max_advance_days, st.bio, (CASE WHEN st.photo_data IS NOT NULL THEN 1 ELSE 0 END) as has_photo FROM stylist_services ss
      JOIN stylists st ON st.id = ss.stylist_id
      WHERE ss.service_type_id = ? AND st.active = 1 AND st.auto_schedule = 1
      ORDER BY st.id ASC`
@@ -1857,7 +2143,14 @@ async function handlePublicSlots(request, env) {
     })));
   }
 
-  const merged = [...manualSlots, ...autoSlots].sort((a, b) => a.slot_time.localeCompare(b.slot_time));
+  // 不指定人員時，客人不在乎是哪位服務人員服務，同一個時間不管有幾位人員有空，只顯示一次
+  const seenTimes = new Set();
+  const merged = [];
+  for (const slot of [...manualSlots, ...autoSlots].sort((a, b) => a.slot_time.localeCompare(b.slot_time))) {
+    if (seenTimes.has(slot.slot_time)) continue;
+    seenTimes.add(slot.slot_time);
+    merged.push(slot);
+  }
   return Response.json({ ok: true, slots: merged });
 }
 
@@ -1907,6 +2200,7 @@ async function handleCreateBooking(request, env) {
   const lineUserId = String(data.lineUserId || "").trim().slice(0, 100);
   const lineDisplayName = String(data.lineDisplayName || "").trim().slice(0, 100);
   const turnstileToken = String(data.turnstileToken || "");
+  const addonIds = Array.isArray(data.addonIds) ? data.addonIds.map((v) => parseInt(v, 10)).filter(Boolean) : [];
 
   if (!rawSlotId || !name || !phone) {
     return Response.json({ ok: false, error: "missing_fields" }, { status: 400 });
@@ -1963,10 +2257,22 @@ async function handleCreateBooking(request, env) {
   }
 
   const manageToken = newSessionId();
-  await env.DB.prepare(
+  const bookingResult = await env.DB.prepare(
     `INSERT INTO bookings (time_slot_id, customer_name, customer_phone, customer_email, line_user_id, line_display_name, note, manage_token)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(slotId, name, phone, email || null, lineUserId || null, lineDisplayName || null, note || null, manageToken).run();
+  const bookingId = bookingResult.meta.last_row_id;
+
+  if (addonIds.length) {
+    const { results: addons } = await env.DB.prepare(
+      `SELECT id, name, price FROM service_addons WHERE active = 1 AND id IN (${addonIds.map(() => "?").join(",")})`
+    ).bind(...addonIds).all();
+    for (const a of addons) {
+      await env.DB.prepare(
+        `INSERT INTO booking_addons (booking_id, addon_id, name_snapshot, price_snapshot) VALUES (?, ?, ?, ?)`
+      ).bind(bookingId, a.id, a.name, a.price).run();
+    }
+  }
 
   const manageUrl = `${new URL(request.url).origin}/my-booking?token=${manageToken}`;
 
@@ -2035,7 +2341,8 @@ async function handleMyBookingPage(request, env, url) {
     }
   }
 
-  return new Response(myBookingPage(booking, availableSlots, msgKey, token), {
+  const themeColor = (await getLineSetting(env, "SHOP_THEME_COLOR")) || "#16181c";
+  return new Response(myBookingPage(booking, availableSlots, msgKey, token, themeColor), {
     status: booking ? 200 : 404,
     headers: { "Content-Type": "text/html; charset=utf-8" },
   });
@@ -2105,6 +2412,22 @@ async function handleRescheduleMyBooking(request, env, url) {
   return redirectTo(`/my-booking?token=${token}&msg=rescheduled`);
 }
 
+const BOOKING_QUERY_KEYWORDS = ["查詢", "查詢預約"];
+const CONTACT_KEYWORDS = ["聯絡我們"];
+const BOOKING_STATUS_LABEL_ZH = { pending: "待確認", confirmed: "已確認" };
+
+async function lookupActiveBookingsForLineUser(env, lineUserId) {
+  const { results } = await env.DB.prepare(
+    `SELECT b.manage_token, b.status, t.slot_date, t.slot_time, s.name as service_name
+     FROM bookings b
+     JOIN time_slots t ON t.id = b.time_slot_id
+     JOIN service_types s ON s.id = t.service_type_id
+     WHERE b.line_user_id = ? AND b.status IN ('pending', 'confirmed')
+     ORDER BY t.slot_date ASC, t.slot_time ASC`
+  ).bind(lineUserId).all();
+  return results;
+}
+
 async function handleLineWebhook(request, env) {
   const rawBody = await request.text();
   const signature = request.headers.get("X-Line-Signature");
@@ -2114,17 +2437,78 @@ async function handleLineWebhook(request, env) {
 
   const liffId = await getLineSetting(env, "LIFF_ID");
   const accessToken = await getLineSetting(env, "LINE_CHANNEL_ACCESS_TOKEN");
+  const origin = new URL(request.url).origin;
 
   const body = JSON.parse(rawBody);
   for (const event of body.events || []) {
     if (event.type === "message" && event.message?.type === "text") {
-      const text = event.message.text || "";
-      if (text.includes("預約") && liffId) {
+      const text = (event.message.text || "").trim();
+      const lineUserId = event.source && event.source.userId;
+
+      if (BOOKING_QUERY_KEYWORDS.includes(text)) {
+        const allBookings = lineUserId ? await lookupActiveBookingsForLineUser(env, lineUserId) : [];
+        // 只顯示還沒開始的預約，已經過去的時段即使狀態還沒被標記完成也不列出
+        const bookings = allBookings.filter((b) => hoursUntilSlot(b.slot_date, b.slot_time) > 0).slice(0, 5);
+        const messages = bookings.length
+          ? [{
+              type: "flex",
+              altText: "你目前的預約",
+              contents: {
+                type: "bubble",
+                body: {
+                  type: "box", layout: "vertical", spacing: "md",
+                  contents: [
+                    { type: "text", text: "你目前的預約", weight: "bold", size: "md" },
+                    { type: "separator", margin: "md" },
+                    ...bookings.flatMap((b, i) => [
+                      {
+                        type: "box", layout: "vertical", margin: i === 0 ? "md" : "lg", spacing: "xs",
+                        contents: [
+                          { type: "text", text: `📅 ${b.slot_date} ${b.slot_time}`, size: "sm", weight: "bold" },
+                          { type: "text", text: `${b.service_name}（${BOOKING_STATUS_LABEL_ZH[b.status] || b.status}）`, size: "sm", color: "#55585f" },
+                          {
+                            type: "button", style: "secondary", height: "sm", margin: "sm",
+                            action: { type: "uri", label: "查看／改期／取消", uri: `${origin}/my-booking?token=${b.manage_token}` },
+                          },
+                        ],
+                      },
+                    ]),
+                  ],
+                },
+              },
+            }]
+          : [{ type: "text", text: `目前沒有找到你的預約紀錄。${liffId ? "\n\n如果想預約，請輸入「預約」。" : ""}` }];
+        await sendLineAndLog(env, {
+          direction: "reply", purpose: "自動回覆：查詢預約",
+          to: lineUserId, replyToken: event.replyToken,
+          messages, accessToken,
+        });
+      } else if (CONTACT_KEYWORDS.includes(text)) {
+        const [phone, hours, socialLinksRaw] = await Promise.all([
+          getLineSetting(env, "SHOP_PHONE"),
+          getLineSetting(env, "SHOP_HOURS"),
+          getLineSetting(env, "SHOP_SOCIAL_LINKS"),
+        ]);
+        let social = {};
+        try { social = JSON.parse(socialLinksRaw || "{}"); } catch { social = {}; }
+        const lines = [];
+        if (hours) lines.push(`🕐 營業時間\n${hours}`);
+        if (phone) lines.push(`📞 電話\n${phone}`);
+        if (social.line) lines.push(`LINE 官方帳號：${social.line}`);
+        if (social.ig) lines.push(`Instagram：${social.ig}`);
+        if (social.fb) lines.push(`Facebook：${social.fb}`);
+        const replyText = lines.length ? lines.join("\n\n") : "目前尚未設定聯絡資訊，請直接在這裡留言，我們會盡快回覆你。";
+        await sendLineAndLog(env, {
+          direction: "reply", purpose: "自動回覆：聯絡我們",
+          to: lineUserId, replyToken: event.replyToken,
+          messages: [{ type: "text", text: replyText }], accessToken,
+        });
+      } else if (text.includes("預約") && liffId) {
         const template = await getTemplate(env, "booking_prompt");
         const message = buildLineMessage(template, { liff_url: `https://liff.line.me/${liffId}` });
         await sendLineAndLog(env, {
           direction: "reply", purpose: "自動回覆：預約連結",
-          to: event.source && event.source.userId, replyToken: event.replyToken,
+          to: lineUserId, replyToken: event.replyToken,
           messages: [message], accessToken,
         });
       }
@@ -2194,8 +2578,17 @@ export default {
     // ---- 公開 API ----
     if (path === "/api/services" && method === "GET") return handlePublicServices(request, env);
     if (path === "/api/stylists" && method === "GET") return handlePublicStylists(request, env);
+    if (path === "/api/addons" && method === "GET") return handlePublicAddons(request, env);
     if (path === "/api/booking/slots" && method === "GET") return handlePublicSlots(request, env);
     if (path === "/api/booking" && method === "POST") return handleCreateBooking(request, env);
+
+    const stylistPhotoServeMatch = path.match(/^\/uploads\/stylist-photo\/(\d+)$/);
+    if (stylistPhotoServeMatch && method === "GET") return handleServeStylistPhoto(request, env, parseInt(stylistPhotoServeMatch[1], 10));
+    if (path === "/uploads/shop-logo" && method === "GET") return handleServeLogo(request, env);
+    const shopBannerServeMatch = path.match(/^\/uploads\/shop-banner\/(\d+)$/);
+    if (shopBannerServeMatch && method === "GET") return handleServeBannerImage(request, env, parseInt(shopBannerServeMatch[1], 10));
+    const shopPortfolioServeMatch = path.match(/^\/uploads\/shop-portfolio\/(\d+)$/);
+    if (shopPortfolioServeMatch && method === "GET") return handleServePortfolioImage(request, env, parseInt(shopPortfolioServeMatch[1], 10));
     if (path === "/api/line/webhook" && method === "POST") return handleLineWebhook(request, env);
     const templateImageMatch = path.match(/^\/uploads\/template\/([a-z_]+)$/);
     if (templateImageMatch && method === "GET") return handleServeTemplateImage(request, env, templateImageMatch[1]);
@@ -2206,7 +2599,22 @@ export default {
     if (path === "/liff/booking" && method === "GET") {
       const liffId = await getLineSetting(env, "LIFF_ID");
       const turnstileSiteKey = await getLineSetting(env, "TURNSTILE_SITE_KEY");
-      return new Response(liffBookingPage(liffId, turnstileSiteKey), { headers: { "Content-Type": "text/html; charset=utf-8" } });
+      const shopValues = await getAllLineSettings(env);
+      let socialLinks = {};
+      try { socialLinks = JSON.parse(shopValues.SHOP_SOCIAL_LINKS || "{}"); } catch { socialLinks = {}; }
+      const shop = {
+        tagline: shopValues.SHOP_TAGLINE,
+        about: shopValues.SHOP_ABOUT,
+        announcement: shopValues.SHOP_ANNOUNCEMENT,
+        themeColor: shopValues.SHOP_THEME_COLOR,
+        hours: shopValues.SHOP_HOURS,
+        phone: shopValues.SHOP_PHONE,
+        socialLinks,
+        hasLogo: await hasLogo(env),
+        banners: await listBanners(env),
+        portfolio: await listPortfolio(env),
+      };
+      return new Response(liffBookingPage(liffId, turnstileSiteKey, shop), { headers: { "Content-Type": "text/html; charset=utf-8" } });
     }
 
     // ---- Admin 登入/登出（登入路徑可自訂，隱藏預設的 /admin 入口）----
@@ -2279,6 +2687,34 @@ export default {
       if (serviceToggleMatch && method === "POST") return handleToggleService(request, env, admin, serviceToggleMatch[1]);
       const serviceDeleteMatch = path.match(/^\/admin\/services\/(\d+)\/delete$/);
       if (serviceDeleteMatch && method === "POST") return handleDeleteService(request, env, admin, serviceDeleteMatch[1]);
+      const serviceUpdateMatch = path.match(/^\/admin\/services\/(\d+)\/update$/);
+      if (serviceUpdateMatch && method === "POST") return handleUpdateService(request, env, admin, serviceUpdateMatch[1]);
+
+      if (path === "/admin/addons" && method === "GET") return handleAdminAddons(request, env, admin, null);
+      if (path === "/admin/addons" && method === "POST") return handleCreateAddon(request, env, admin);
+      const addonUpdateMatch = path.match(/^\/admin\/addons\/(\d+)\/update$/);
+      if (addonUpdateMatch && method === "POST") return handleUpdateAddon(request, env, admin, addonUpdateMatch[1]);
+      const addonToggleMatch = path.match(/^\/admin\/addons\/(\d+)\/toggle$/);
+      if (addonToggleMatch && method === "POST") return handleToggleAddon(request, env, admin, addonToggleMatch[1]);
+      const addonDeleteMatch = path.match(/^\/admin\/addons\/(\d+)\/delete$/);
+      if (addonDeleteMatch && method === "POST") return handleDeleteAddon(request, env, admin, addonDeleteMatch[1]);
+
+      if (path === "/admin/shop" && method === "GET") return handleShopProfilePage(request, env, admin, url.searchParams.get("saved") === "1");
+      if (path === "/admin/shop/profile" && method === "POST") return handleUpdateShopProfile(request, env, admin);
+      if (path === "/admin/shop/logo" && method === "POST") return handleUploadLogo(request, env, admin);
+      if (path === "/admin/shop/logo/delete" && method === "POST") return handleDeleteLogo(request, env, admin);
+      if (path === "/admin/shop/banners" && method === "POST") return handleUploadBanner(request, env, admin);
+      const shopBannerDeleteMatch = path.match(/^\/admin\/shop\/banners\/(\d+)\/delete$/);
+      if (shopBannerDeleteMatch && method === "POST") return handleDeleteBanner(request, env, admin, parseInt(shopBannerDeleteMatch[1], 10));
+      const shopBannerMoveMatch = path.match(/^\/admin\/shop\/banners\/(\d+)\/move$/);
+      if (shopBannerMoveMatch && method === "POST") return handleMoveBanner(request, env, admin, parseInt(shopBannerMoveMatch[1], 10));
+      if (path === "/admin/shop/portfolio" && method === "POST") return handleUploadPortfolio(request, env, admin);
+      const shopPortfolioDeleteMatch = path.match(/^\/admin\/shop\/portfolio\/(\d+)\/delete$/);
+      if (shopPortfolioDeleteMatch && method === "POST") return handleDeletePortfolio(request, env, admin, parseInt(shopPortfolioDeleteMatch[1], 10));
+      const shopPortfolioMoveMatch = path.match(/^\/admin\/shop\/portfolio\/(\d+)\/move$/);
+      if (shopPortfolioMoveMatch && method === "POST") return handleMovePortfolio(request, env, admin, parseInt(shopPortfolioMoveMatch[1], 10));
+
+      if (path === "/admin/line-richmenu" && method === "GET") return handleLineRichMenuPage(request, env, admin);
 
       if (path === "/admin/stylists" && method === "GET") return handleAdminStylists(request, env, admin, null);
       if (path === "/admin/stylists" && method === "POST") return handleCreateStylist(request, env, admin);
@@ -2289,6 +2725,12 @@ export default {
       const stylistScheduleMatch = path.match(/^\/admin\/stylists\/(\d+)\/schedule$/);
       if (stylistScheduleMatch && method === "GET") return handleStylistSchedulePage(request, env, admin, stylistScheduleMatch[1], null, url.searchParams.get("saved") === "1");
       if (stylistScheduleMatch && method === "POST") return handleUpdateStylistSchedule(request, env, admin, stylistScheduleMatch[1]);
+      const stylistProfileMatch = path.match(/^\/admin\/stylists\/(\d+)\/profile$/);
+      if (stylistProfileMatch && method === "POST") return handleUpdateStylistProfile(request, env, admin, stylistProfileMatch[1]);
+      const stylistPhotoMatch = path.match(/^\/admin\/stylists\/(\d+)\/photo$/);
+      if (stylistPhotoMatch && method === "POST") return handleUploadStylistPhoto(request, env, admin, stylistPhotoMatch[1]);
+      const stylistPhotoDeleteMatch = path.match(/^\/admin\/stylists\/(\d+)\/photo\/delete$/);
+      if (stylistPhotoDeleteMatch && method === "POST") return handleDeleteStylistPhoto(request, env, admin, stylistPhotoDeleteMatch[1]);
 
       if (path === "/admin/slots" && method === "GET") return handleAdminSlots(request, env, admin, url);
       if (path === "/admin/slots" && method === "POST") return handleCreateSlot(request, env, admin);

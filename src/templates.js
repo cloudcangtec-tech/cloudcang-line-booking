@@ -39,6 +39,11 @@ const BASE_STYLE = `
   .stat-card .num { font-size:1.9rem; font-weight:700; line-height:1.2; }
   .stat-card .label { font-size:0.8rem; color:var(--ink-soft); margin-top:0.3rem; }
   .stat-card.warn .num { color:#8a6d00; }
+  .stats-bar { display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:1.5rem; }
+  .booking-stat-card { background:var(--bg-alt); border-radius:8px; padding:0.9rem 1.2rem; min-width:160px; }
+  .stat-card-label { font-size:0.8rem; color:var(--ink-soft); margin-bottom:0.3rem; }
+  .stat-card-value { font-size:1.6rem; font-weight:700; color:var(--ink); line-height:1; }
+  .stat-card-sub { font-size:0.78rem; color:var(--ink-soft); margin-top:0.3rem; }
   .dash-grid { display:grid; grid-template-columns:2fr 1fr; gap:1.5rem; align-items:start; }
   .panel { background:#fff; border:1px solid var(--line); border-radius:8px; padding:1.5rem; }
   .panel h2 { font-size:1rem; margin:0 0 1rem; }
@@ -56,6 +61,11 @@ const BASE_STYLE = `
 
   /* badges */
   .badge { display:inline-flex; align-items:center; gap:0.35rem; font-size:0.82rem; white-space:nowrap; }
+
+  /* 訊息範本變數插入按鈕 */
+  .var-insert-group { display:flex; gap:0.4rem; flex-wrap:wrap; }
+  .var-insert-btn { background:var(--bg-alt); color:var(--ink); border:1px solid var(--line); border-radius:999px; padding:0.35rem 0.8rem; font-size:0.78rem; cursor:pointer; }
+  .var-insert-btn:hover { background:var(--line); }
 
   /* bookings filters */
   .filter-bar { display:flex; align-items:center; gap:1rem; flex-wrap:wrap; margin-bottom:1.5rem; }
@@ -169,10 +179,13 @@ const NAV_ITEMS = [
   { key: "customers", href: "/admin/customers", icon: "◑", label: "顧客", staff: true },
   { key: "stylists", href: "/admin/stylists", icon: "▧", label: "服務人員", staff: true },
   { key: "services", href: "/admin/services", icon: "◈", label: "服務項目" },
+  { key: "addons", href: "/admin/addons", icon: "▩", label: "加購項目" },
   { key: "closedDates", href: "/admin/closed-dates", icon: "✕", label: "公休日" },
   { key: "reports", href: "/admin/reports", icon: "▥", label: "報表" },
 ];
 const NAV_ITEMS_BOTTOM = [
+  { key: "shop", href: "/admin/shop", icon: "🖼", label: "店面設計" },
+  { key: "richmenu", href: "/admin/line-richmenu", icon: "▣", label: "圖文選單" },
   { key: "settings", href: "/admin/settings", icon: "⚙", label: "第三方串接" },
   { key: "messages", href: "/admin/messages", icon: "✉", label: "訊息範本" },
   { key: "audit", href: "/admin/audit-log", icon: "☰", label: "操作紀錄" },
@@ -474,14 +487,30 @@ export function bookingsPage(bookings, filters) {
       <td data-label="時段">${b.slot_date} ${b.slot_time}</td>
       <td data-label="姓名">${escapeHtml(b.customer_name)} ${customerTagBadge(b.customer_tag)}${(b.dup_count > 0 && (b.status === "pending" || b.status === "confirmed")) ? ` <span class="badge" style="background:#fdecea; color:#b3261e;" title="這個人／這支電話還有其他待確認或已確認的預約">⚠ 重複預約</span>` : ""}</td>
       <td data-label="電話">${escapeHtml(b.customer_phone)}</td>
-      <td data-label="服務項目">${escapeHtml(b.service_name)}${b.stylist_name ? ` <span style="color:var(--ink-soft); font-size:0.82rem;">✂ ${escapeHtml(b.stylist_name)}</span>` : ""}</td>
+      <td data-label="服務項目">${escapeHtml(b.service_name)}</td>
+      <td data-label="服務人員">${b.stylist_name ? escapeHtml(b.stylist_name) : "-"}</td>
       <td data-label="LINE">${lineIdentityCell(b.line_user_id, b.line_display_name)}</td>
+      <td data-label="加購">${b.addon_names ? `${escapeHtml(b.addon_names)}<br><span style="color:var(--ink-soft); font-size:0.8rem;">+NT$${b.addon_total}</span>` : "-"}</td>
       <td data-label="備註">${escapeHtml(b.note || "-")}</td>
       <td data-label="狀態">${quickStatusForm(b, `/admin/bookings?range=${range}&status=${status}&q=${encodeURIComponent(q)}&dateFrom=${dateFrom}&dateTo=${dateTo}`)}</td>
-    </tr>`).join("") : `<tr><td colspan="7" class="empty">沒有符合條件的預約紀錄。</td></tr>`;
+    </tr>`).join("") : `<tr><td colspan="9" class="empty">沒有符合條件的預約紀錄。</td></tr>`;
+
+  const stats = filters.stats || {};
+  const statCard = (label, value, sub) => `
+    <div class="booking-stat-card">
+      <div class="stat-card-label">${label}</div>
+      <div class="stat-card-value">${value ?? 0}</div>
+      ${sub ? `<div class="stat-card-sub">${sub}</div>` : ""}
+    </div>`;
+  const statsBar = `
+    <div class="stats-bar">
+      ${statCard("今日預約", stats.today_total, `待確認 ${stats.today_pending ?? 0}／已確認 ${stats.today_confirmed ?? 0}`)}
+      ${statCard("本週預約", stats.week_total, "含今日起 7 天")}
+    </div>`;
 
   return `
     <h1>預約管理</h1>
+    ${statsBar}
     <div class="filter-bar">
       <div class="tab-group">
         ${tab("today", "今天")}
@@ -508,7 +537,7 @@ export function bookingsPage(bookings, filters) {
     </div>
     <p style="margin-bottom:1rem;"><a href="/admin/bookings/export.csv?range=${range}&status=${status}&q=${encodeURIComponent(q)}&dateFrom=${dateFrom}&dateTo=${dateTo}" class="btn-outline">⬇ 匯出目前篩選結果 CSV</a></p>
     <table class="table-cards">
-      <thead><tr><th>時段</th><th>姓名</th><th>電話</th><th>服務項目</th><th>LINE</th><th>備註</th><th>狀態</th></tr></thead>
+      <thead><tr><th>時段</th><th>姓名</th><th>電話</th><th>服務項目</th><th>服務人員</th><th>LINE</th><th>加購</th><th>備註</th><th>狀態</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
   `;
@@ -516,7 +545,7 @@ export function bookingsPage(bookings, filters) {
 
 export function newBookingPage(slots, error) {
   const options = slots.length
-    ? slots.map((s) => `<option value="${s.id}">${s.slot_date} ${s.slot_time}（${escapeHtml(s.service_name)}${s.stylist_name ? `・✂${escapeHtml(s.stylist_name)}` : ""}，剩 ${s.capacity - s.booked_count} 位）</option>`).join("")
+    ? slots.map((s) => `<option value="${s.id}">${s.slot_date} ${s.slot_time}（${escapeHtml(s.service_name)}${s.stylist_name ? `・服務人員：${escapeHtml(s.stylist_name)}` : ""}，剩 ${s.capacity - s.booked_count} 位）</option>`).join("")
     : `<option value="">目前沒有可預約的開放時段</option>`;
   return `
     <h1>新增預約</h1>
@@ -717,6 +746,13 @@ export function servicesPage(services, error) {
     <tr class="${s.active ? "" : "inactive-row"}">
       <td data-label="名稱">${escapeHtml(s.name)}</td>
       <td data-label="時長">${s.duration_minutes} 分鐘</td>
+      <td data-label="價格／說明">
+        <form method="POST" action="/admin/services/${s.id}/update" style="display:flex; flex-direction:column; gap:0.4rem; max-width:320px;">
+          <input type="number" name="price" min="0" placeholder="價格（選填，NT$）" value="${s.price != null ? s.price : ""}" style="padding:0.45rem; border:1px solid var(--line); border-radius:4px; font-size:0.85rem;">
+          <input type="text" name="description" placeholder="說明（選填）" value="${escapeHtml(s.description || "")}" style="padding:0.45rem; border:1px solid var(--line); border-radius:4px; font-size:0.85rem;">
+          <button type="submit" class="btn-outline" style="align-self:start;">更新</button>
+        </form>
+      </td>
       <td data-label="狀態">${s.active ? "使用中" : "已停用"}</td>
       <td data-label="操作" style="display:flex; gap:0.5rem; flex-wrap:wrap;">
         <form method="POST" action="/admin/services/${s.id}/toggle" style="margin:0;">
@@ -732,21 +768,66 @@ export function servicesPage(services, error) {
         </form>`}
       </td>
     </tr>`;
-  }).join("") : `<tr><td colspan="4" class="empty">尚未設定任何服務項目。</td></tr>`;
+  }).join("") : `<tr><td colspan="5" class="empty">尚未設定任何服務項目。</td></tr>`;
   return `
     <h1>服務項目</h1>
     ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
     <form method="POST" action="/admin/services" class="mini-add" style="background:#fff; border:1px solid var(--line); border-radius:8px; padding:1.25rem;">
       <label>名稱<input type="text" name="name" required></label>
       <label>預估時長（分鐘）<input type="number" name="duration" min="5" value="60" required></label>
+      <label>價格（選填，NT$）<input type="number" name="price" min="0"></label>
+      <label>說明（選填）<input type="text" name="description"></label>
       <button type="submit" class="btn">新增服務項目</button>
     </form>
     <div style="height:1.5rem;"></div>
     <table class="table-cards">
-      <thead><tr><th>名稱</th><th>時長</th><th>狀態</th><th>操作</th></tr></thead>
+      <thead><tr><th>名稱</th><th>時長</th><th>價格／說明</th><th>狀態</th><th>操作</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <p style="color:#8a6d00; font-size:0.82rem; margin-top:1rem; background:#fff3cd; padding:0.7rem 1rem; border-radius:4px;">⚠️ 注意：已經有時段紀錄的服務項目，資料庫結構上無法只「解除關聯」再刪除，只能整批把相關的時段跟預約紀錄一起「永久刪除」（會顯示「強制刪除」按鈕），從預約管理、CSV 匯出、報表中一併消失且無法復原。如果想保留歷史資料，請改用「停用」。</p>
+  `;
+}
+
+export function addonsPage(addons, error) {
+  const rows = addons.length ? addons.map((a) => `
+    <tr class="${a.active ? "" : "inactive-row"}">
+      <td data-label="名稱">${escapeHtml(a.name)}</td>
+      <td data-label="分類">${escapeHtml(a.category || "-")}</td>
+      <td data-label="價格">
+        <form method="POST" action="/admin/addons/${a.id}/update" style="display:flex; flex-direction:column; gap:0.4rem; max-width:260px;">
+          <input type="number" name="price" min="0" value="${a.price}" required style="padding:0.45rem; border:1px solid var(--line); border-radius:4px; font-size:0.85rem;">
+          <input type="text" name="category" placeholder="分類（選填）" value="${escapeHtml(a.category || "")}" style="padding:0.45rem; border:1px solid var(--line); border-radius:4px; font-size:0.85rem;">
+          <button type="submit" class="btn-outline" style="align-self:start;">更新</button>
+        </form>
+      </td>
+      <td data-label="狀態">${a.active ? "使用中" : "已停用"}</td>
+      <td data-label="操作" style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+        <form method="POST" action="/admin/addons/${a.id}/toggle" style="margin:0;">
+          <button type="submit" class="toggle-btn">${a.active ? "停用" : "啟用"}</button>
+        </form>
+        <form method="POST" action="/admin/addons/${a.id}/delete" style="margin:0;" onsubmit="return confirm('確定要刪除「${escapeHtml(a.name)}」嗎？');">
+          <button type="submit" class="delete-btn">刪除</button>
+        </form>
+      </td>
+    </tr>`).join("") : `<tr><td colspan="5" class="empty">尚未設定任何加購項目。</td></tr>`;
+
+  return `
+    <h1>加購項目</h1>
+    ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
+    <p style="color:var(--ink-soft); font-size:0.88rem; max-width:70ch; margin-bottom:1.5rem;">
+      客人在線上預約時可以勾選加購項目，金額會加總顯示。加購項目目前不會延長預約所佔用的時段長度，純粹是加價商品／服務。
+    </p>
+    <form method="POST" action="/admin/addons" class="mini-add" style="background:#fff; border:1px solid var(--line); border-radius:8px; padding:1.25rem;">
+      <label>名稱<input type="text" name="name" required></label>
+      <label>價格（NT$）<input type="number" name="price" min="0" value="0" required></label>
+      <label>分類（選填，例如「咖啡體驗」）<input type="text" name="category"></label>
+      <button type="submit" class="btn">新增加購項目</button>
+    </form>
+    <div style="height:1.5rem;"></div>
+    <table class="table-cards">
+      <thead><tr><th>名稱</th><th>分類</th><th>價格</th><th>狀態</th><th>操作</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
   `;
 }
 
@@ -814,6 +895,29 @@ export function stylistSchedulePage({ stylist, workByWeekday, breakByWeekday, al
     </p>
     ${saved ? `<p class="success-msg">已儲存。</p>` : ""}
     ${error ? `<p class="error">${error}</p>` : ""}
+
+    <div class="panel" style="margin-bottom:1.5rem;">
+      <h2>基本資料（大頭貼／簡介）</h2>
+      <div style="display:flex; align-items:center; gap:1rem; margin-bottom:1rem;">
+        ${stylist.has_photo ? `<img src="/uploads/stylist-photo/${stylist.id}?v=${Date.now()}" alt="" style="width:72px; height:72px; object-fit:cover; border-radius:50%; border:1px solid var(--line);">` : `<div style="width:72px; height:72px; border-radius:50%; background:var(--bg-alt); display:flex; align-items:center; justify-content:center; color:var(--ink-soft); font-size:0.75rem;">無照片</div>`}
+        <form method="POST" action="/admin/stylists/${stylist.id}/photo" enctype="multipart/form-data" style="display:flex; gap:0.6rem; align-items:center;">
+          <input type="file" name="image" accept="image/png,image/jpeg,image/webp" required>
+          <button type="submit" class="btn-outline">${stylist.has_photo ? "更換照片" : "上傳照片"}</button>
+        </form>
+        ${stylist.has_photo ? `
+        <form method="POST" action="/admin/stylists/${stylist.id}/photo/delete" onsubmit="return confirm('確定要刪除這張照片嗎？');">
+          <button type="submit" class="delete-btn">刪除照片</button>
+        </form>` : ""}
+      </div>
+      <form method="POST" action="/admin/stylists/${stylist.id}/profile" style="max-width:520px;">
+        <label style="display:flex; flex-direction:column; gap:0.4rem; font-size:0.85rem; color:var(--ink-soft);">
+          簡介（選填，顯示在預約頁的服務人員介紹）
+          <textarea name="bio" rows="3" style="padding:0.6rem; border:1px solid var(--line); border-radius:4px;">${escapeHtml(stylist.bio || "")}</textarea>
+        </label>
+        <button type="submit" class="btn-outline" style="margin-top:0.8rem;">儲存簡介</button>
+      </form>
+    </div>
+
     <form method="POST" action="/admin/stylists/${stylist.id}/schedule">
       <label style="display:flex; align-items:center; gap:0.5rem; font-size:0.95rem; font-weight:600; margin-bottom:1.2rem;">
         <input type="checkbox" name="autoSchedule" ${stylist.auto_schedule ? "checked" : ""}> 開啟自動排程
@@ -874,7 +978,7 @@ export function slotsPage({ year, month, weeks, todayStr, selectedDate, daySlots
       <input type="checkbox" name="slotIds" value="${s.id}">
       <span class="time">${s.slot_time}</span>
       <span class="cap">${s.booked_count} / ${s.capacity}</span>
-      <span style="flex:1;">${escapeHtml(s.service_name)}${s.stylist_name ? ` ・ ✂ ${escapeHtml(s.stylist_name)}` : ""}</span>
+      <span style="flex:1;">${escapeHtml(s.service_name)}${s.stylist_name ? ` ・ 服務人員：${escapeHtml(s.stylist_name)}` : ""}${s.cancelled_count > 0 ? ` <span class="badge" style="background:#fdecea; color:#b3261e;" title="這個時段曾經有預約被取消過">⚠ 曾取消${s.cancelled_count > 1 ? `×${s.cancelled_count}` : ""}</span>` : ""}</span>
       <span>${s.active ? "🟢 開放" : "⚪ 關閉"}</span>
       <button type="submit" formaction="/admin/slots/${s.id}/toggle" class="toggle-btn">${s.active ? "關閉" : "開放"}</button>
       <button type="submit" formaction="/admin/slots/${s.id}/delete" class="delete-btn" onclick="return confirm('確定要刪除這個時段嗎？');">刪除</button>
@@ -912,14 +1016,18 @@ export function slotsPage({ year, month, weeks, todayStr, selectedDate, daySlots
       ${selectedDateClosedReason !== undefined ? `
         <p class="empty" style="margin-top:1rem;">這天已設定為公休日，如需在這天開放時段，請先到「公休日」頁面移除設定。</p>
       ` : `
-      <form class="mini-add" method="POST" action="/admin/slots">
-        <input type="hidden" name="date" value="${selectedDate}">
-        <label>服務項目<select name="serviceTypeId" required>${serviceOptions}</select></label>
-        <label>服務人員（選填）<select name="stylistId"><option value="">不指定</option>${stylistOptions}</select></label>
-        <label>時間<input type="time" name="time" required></label>
-        <label>可容納組數<input type="number" name="capacity" min="1" value="1" required></label>
-        <button type="submit" class="btn">＋ 新增時段</button>
-      </form>
+      <div class="batch-panel" style="margin-top:1.5rem;">
+        <h2>手動新增單一時段</h2>
+        <p class="hint">在上面選定的這一天，手動建立一個時段，適合只想臨時加開一個時間的情況；如果要一次建立很多個時段，請用下方的「批次建立時段」。</p>
+        <form class="mini-add" method="POST" action="/admin/slots">
+          <input type="hidden" name="date" value="${selectedDate}">
+          <label>服務項目<select name="serviceTypeId" required>${serviceOptions}</select></label>
+          <label>服務人員（選填）<select name="stylistId"><option value="">不指定</option>${stylistOptions}</select></label>
+          <label>時間<input type="time" name="time" required></label>
+          <label>可容納組數<input type="number" name="capacity" min="1" value="1" required></label>
+          <button type="submit" class="btn">＋ 新增時段</button>
+        </form>
+      </div>
       `}
     </div>
 
@@ -984,22 +1092,43 @@ export function slotsPage({ year, month, weeks, todayStr, selectedDate, daySlots
 }
 
 export function messagesPage(templates, labels, saved) {
+  // 每個範本可以用的變數：key 是實際寫進內文的變數名稱，label 是給不懂程式的人看的白話說明
   const availableVars = {
-    booking_prompt: "{{liff_url}}",
-    booking_received: "{{customer_name}} {{slot_date}} {{slot_time}} {{manage_url}}",
-    status_confirmed: "{{customer_name}} {{slot_date}} {{slot_time}}",
-    status_cancelled: "{{customer_name}} {{slot_date}} {{slot_time}}",
-    status_completed: "{{customer_name}} {{slot_date}} {{slot_time}}",
-    reminder: "{{customer_name}} {{slot_date}} {{slot_time}} {{service_name}}",
+    booking_prompt: [{ key: "liff_url", label: "預約頁面連結" }],
+    booking_received: [
+      { key: "customer_name", label: "顧客姓名" }, { key: "slot_date", label: "預約日期" },
+      { key: "slot_time", label: "預約時間" }, { key: "manage_url", label: "管理預約連結" },
+    ],
+    status_confirmed: [
+      { key: "customer_name", label: "顧客姓名" }, { key: "slot_date", label: "預約日期" }, { key: "slot_time", label: "預約時間" },
+    ],
+    status_cancelled: [
+      { key: "customer_name", label: "顧客姓名" }, { key: "slot_date", label: "預約日期" }, { key: "slot_time", label: "預約時間" },
+    ],
+    status_completed: [
+      { key: "customer_name", label: "顧客姓名" }, { key: "slot_date", label: "預約日期" }, { key: "slot_time", label: "預約時間" },
+    ],
+    reminder: [
+      { key: "customer_name", label: "顧客姓名" }, { key: "slot_date", label: "預約日期" },
+      { key: "slot_time", label: "預約時間" }, { key: "service_name", label: "服務項目" },
+    ],
   };
+  // 只有訊息裡本來就有連結可用的範本，才顯示「按鈕」欄位，其餘範本沒有連結可以放，顯示按鈕欄位反而讓人不知道要填什麼
+  const buttonUrlVar = { booking_prompt: "liff_url", booking_received: "manage_url" };
 
   const sections = templates.map((t) => {
     const hasImage = !!t.image_url;
     const cacheBust = t.updated_at ? new Date(t.updated_at + "Z").getTime() : Date.now();
+    const vars = availableVars[t.template_key] || [];
+    const bodyFieldId = `body-${t.template_key}`;
+    const varButtons = vars.map((v) =>
+      `<button type="button" class="var-insert-btn" data-target="${bodyFieldId}" data-var="{{${v.key}}}">+ ${escapeHtml(v.label)}</button>`
+    ).join("");
+    const urlVarKey = buttonUrlVar[t.template_key];
+
     return `
     <div class="panel" style="margin-bottom:1.5rem;">
       <h2>${labels[t.template_key] || t.template_key}</h2>
-      <p style="color:var(--ink-soft); font-size:0.8rem; margin:-0.5rem 0 1rem;">可用變數：${availableVars[t.template_key] || ""}</p>
 
       <label style="display:block; font-size:0.85rem; color:var(--ink-soft); margin-bottom:0.5rem;">圖片（選填，留空則不顯示圖片）</label>
       ${hasImage ? `
@@ -1022,12 +1151,23 @@ export function messagesPage(templates, labels, saved) {
         </label>
         <label style="display:flex; flex-direction:column; gap:0.4rem; font-size:0.85rem; color:var(--ink-soft);">
           內文
-          <textarea name="bodyText" rows="3" style="padding:0.6rem; border:1px solid var(--line); border-radius:4px;">${escapeHtml(t.body_text || "")}</textarea>
+          <textarea name="bodyText" id="${bodyFieldId}" rows="3" style="padding:0.6rem; border:1px solid var(--line); border-radius:4px;">${escapeHtml(t.body_text || "")}</textarea>
         </label>
+        ${vars.length ? `
+        <div>
+          <p style="font-size:0.78rem; color:var(--ink-soft); margin:0 0 0.4rem;">點擊下方按鈕，會把對應資料插入到上面內文游標所在的位置：</p>
+          <div class="var-insert-group">${varButtons}</div>
+        </div>` : ""}
+        ${urlVarKey ? `
         <div class="batch-grid">
-          <label>按鈕文字（選填）<input type="text" name="buttonText" value="${escapeHtml(t.button_text || "")}" maxlength="20"></label>
-          <label>按鈕連結（選填，可用 {{liff_url}}）<input type="text" name="buttonUrl" value="${escapeHtml(t.button_url || "")}"></label>
+          <label>按鈕文字（選填，例如「查看預約」）<input type="text" name="buttonText" value="${escapeHtml(t.button_text || "")}" maxlength="20"></label>
+          <label>
+            按鈕連結（選填）
+            <input type="text" name="buttonUrl" id="url-${t.template_key}" value="${escapeHtml(t.button_url || "")}">
+            <button type="button" class="var-insert-btn" data-target="url-${t.template_key}" data-var="{{${urlVarKey}}}" style="margin-top:0.4rem; align-self:start;">+ 填入連結</button>
+          </label>
         </div>
+        ` : ""}
         <button type="submit" class="btn" style="align-self:start;">儲存</button>
       </form>
     </div>
@@ -1038,9 +1178,23 @@ export function messagesPage(templates, labels, saved) {
     <h1>訊息範本</h1>
     ${saved ? `<p class="success-msg">已儲存。</p>` : ""}
     <p style="color:var(--ink-soft); font-size:0.88rem; max-width:70ch; margin-bottom:1.5rem;">
-      設定 LINE 自動通知的內容。有填圖片網址或標題時，會自動變成圖文卡片＋按鈕的樣式；都留空則維持純文字訊息。
+      設定 LINE 自動通知的內容。有填圖片網址或標題時，會自動變成圖文卡片＋按鈕的樣式；都留空則維持純文字訊息。內文可以直接打字，想要帶入顧客姓名、日期等資料時，把游標點到想插入的位置，再點下面的按鈕即可，不用自己輸入大括號。
     </p>
     ${sections}
+    <script>
+      document.querySelectorAll('.var-insert-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var target = document.getElementById(btn.dataset.target);
+          if (!target) return;
+          var val = btn.dataset.var;
+          var start = target.selectionStart ?? target.value.length;
+          var end = target.selectionEnd ?? target.value.length;
+          target.value = target.value.slice(0, start) + val + target.value.slice(end);
+          target.focus();
+          target.selectionStart = target.selectionEnd = start + val.length;
+        });
+      });
+    </script>
   `;
 }
 
@@ -1357,18 +1511,32 @@ const PAGE_BASE_STYLE = `
 </style>
 `;
 
-export function myBookingPage(booking, availableSlots, msgKey, token) {
+export function myBookingPage(booking, availableSlots, msgKey, token, theme = "#16181c") {
   if (!booking) {
     return `<!doctype html><html lang="zh-Hant"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>找不到預約｜${APP_NAME}</title>${PAGE_BASE_STYLE}</head>
     <body><h1>找不到這筆預約</h1><p class="empty">連結可能有誤或已失效，請透過官方帳號重新確認。</p></body></html>`;
   }
 
   const canModify = booking.status === "pending" || booking.status === "confirmed";
-  const slotOptions = availableSlots.map((s) =>
-    `<option value="${s.id}">${s.slot_date} ${s.slot_time}（剩 ${s.capacity - s.booked_count} 位）</option>`
-  ).join("");
+  const themeColor = escapeHtml(theme);
+  const slotsJson = JSON.stringify(availableSlots.map((s) => ({ id: s.id, slot_date: s.slot_date, slot_time: s.slot_time }))).replace(/</g, "\\u003c");
 
-  return `<!doctype html><html lang="zh-Hant"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>我的預約｜${APP_NAME}</title>${PAGE_BASE_STYLE}</head>
+  const rescheduleStyle = `
+  <style>
+    .wizard-date-grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:0.5rem; margin-top:0.6rem; }
+    .wizard-date-card { border:1px solid #e4e4e0; border-radius:6px; cursor:pointer; padding:0.6rem 0.3rem; text-align:center; font-size:0.8rem; }
+    .wizard-date-card.selected { background:${themeColor}; color:#fff; border-color:${themeColor}; }
+    .wizard-date-card .wd { color:#55585f; font-size:0.72rem; }
+    .wizard-date-card.selected .wd { color:#fff; opacity:0.85; }
+    .wizard-date-card .dd { font-weight:700; font-size:1rem; margin-top:0.1rem; }
+    .wizard-time-grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:0.5rem; margin-top:0.6rem; }
+    .wizard-time-card { border:1px solid #e4e4e0; border-radius:6px; cursor:pointer; padding:0.7rem 0.3rem; text-align:center; font-size:0.85rem; }
+    .wizard-time-card.selected { background:${themeColor}; color:#fff; border-color:${themeColor}; }
+    .wizard-step-label { font-size:0.82rem; color:#55585f; margin:1.2rem 0 0; }
+    .btn:disabled { opacity:0.45; cursor:not-allowed; }
+  </style>`;
+
+  return `<!doctype html><html lang="zh-Hant"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>我的預約｜${APP_NAME}</title>${PAGE_BASE_STYLE}${canModify && availableSlots.length ? rescheduleStyle : ""}</head>
   <body>
     <h1>我的預約</h1>
     ${msgKey && MSG_TEXT[msgKey] ? `<div class="notice">${MSG_TEXT[msgKey]}</div>` : ""}
@@ -1378,61 +1546,471 @@ export function myBookingPage(booking, availableSlots, msgKey, token) {
     <div class="info-row"><span class="k">狀態</span><span>${statusBadge(booking.status)}</span></div>
 
     ${canModify ? `
-      <form method="POST" action="/my-booking/reschedule?token=${token}" style="margin-top:1.5rem;">
+      <div style="margin-top:1.5rem;">
         <label style="font-size:0.85rem; color:#55585f;">更改時段</label>
-        ${slotOptions ? `
-          <select name="newSlotId" required>${slotOptions}</select>
-          <button type="submit" class="btn">確認更改時段</button>
+        ${availableSlots.length ? `
+          <form method="POST" action="/my-booking/reschedule?token=${token}" id="rescheduleForm">
+            <input type="hidden" name="newSlotId" id="newSlotIdInput" value="">
+            <div class="wizard-step-label">步驟 1／2：選擇日期</div>
+            <div class="wizard-date-grid" id="dateGrid"></div>
+            <div class="wizard-step-label" id="timeStepLabel" style="display:none;">步驟 2／2：選擇時段</div>
+            <div class="wizard-time-grid" id="timeGrid"></div>
+            <button type="submit" class="btn" id="rescheduleSubmitBtn" disabled>確認更改時段</button>
+          </form>
         ` : `<p class="empty">目前沒有其他可預約的時段。</p>`}
-      </form>
+      </div>
       <form method="POST" action="/my-booking/cancel?token=${token}" onsubmit="return confirm('確定要取消這筆預約嗎？');">
         <button type="submit" class="btn btn-danger">取消這筆預約</button>
       </form>
     ` : `<p class="empty" style="margin-top:1.5rem;">這筆預約目前狀態無法再取消或更改時段。</p>`}
+
+    ${canModify && availableSlots.length ? `<script>
+      var SLOTS = ${slotsJson};
+      var WEEKDAY_CHARS = ['一','二','三','四','五','六','日'];
+      function dateLabel(d) {
+        var parts = d.split('-').map(Number);
+        var dt = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+        var wd = dt.getUTCDay();
+        var idx = wd === 0 ? 6 : wd - 1;
+        return { wd: WEEKDAY_CHARS[idx], dd: parts[1] + '/' + parts[2] };
+      }
+      var byDate = {};
+      SLOTS.forEach(function (s) { (byDate[s.slot_date] = byDate[s.slot_date] || []).push(s); });
+      var dates = Object.keys(byDate).sort();
+      var dateGrid = document.getElementById('dateGrid');
+      var timeGrid = document.getElementById('timeGrid');
+      var timeStepLabel = document.getElementById('timeStepLabel');
+      var newSlotIdInput = document.getElementById('newSlotIdInput');
+      var submitBtn = document.getElementById('rescheduleSubmitBtn');
+
+      function renderTimes(d) {
+        timeStepLabel.style.display = '';
+        timeGrid.innerHTML = '';
+        newSlotIdInput.value = '';
+        submitBtn.disabled = true;
+        byDate[d].slice().sort(function (a, b) { return a.slot_time.localeCompare(b.slot_time); }).forEach(function (s) {
+          var card = document.createElement('div');
+          card.className = 'wizard-time-card';
+          card.textContent = s.slot_time;
+          card.addEventListener('click', function () {
+            Array.prototype.forEach.call(timeGrid.querySelectorAll('.wizard-time-card'), function (c) { c.classList.remove('selected'); });
+            card.classList.add('selected');
+            newSlotIdInput.value = s.id;
+            submitBtn.disabled = false;
+          });
+          timeGrid.appendChild(card);
+        });
+      }
+
+      dates.forEach(function (d) {
+        var label = dateLabel(d);
+        var card = document.createElement('div');
+        card.className = 'wizard-date-card';
+        card.innerHTML = '<div class="wd">' + label.wd + '</div><div class="dd">' + label.dd + '</div>';
+        card.addEventListener('click', function () {
+          Array.prototype.forEach.call(dateGrid.querySelectorAll('.wizard-date-card'), function (c) { c.classList.remove('selected'); });
+          card.classList.add('selected');
+          renderTimes(d);
+        });
+        dateGrid.appendChild(card);
+      });
+    </script>` : ""}
   </body></html>`;
 }
 
-export function liffBookingPage(liffId, turnstileSiteKey) {
+export function shopProfilePage({ profile, banners, portfolio, saved, error, maxBanners, hasLogo }) {
+  const bannerRows = banners.map((b, i) => `
+    <div style="display:flex; align-items:center; gap:1rem; padding:0.6rem 0; border-bottom:1px solid var(--line);">
+      <img src="/uploads/shop-banner/${b.id}" alt="" style="width:100px; height:56px; object-fit:cover; border:1px solid var(--line); border-radius:4px;">
+      <div style="display:flex; gap:0.4rem;">
+        <form method="POST" action="/admin/shop/banners/${b.id}/move"><input type="hidden" name="direction" value="up"><button type="submit" class="btn-outline" ${i === 0 ? "disabled" : ""}>↑</button></form>
+        <form method="POST" action="/admin/shop/banners/${b.id}/move"><input type="hidden" name="direction" value="down"><button type="submit" class="btn-outline" ${i === banners.length - 1 ? "disabled" : ""}>↓</button></form>
+      </div>
+      <form method="POST" action="/admin/shop/banners/${b.id}/delete" onsubmit="return confirm('確定要刪除這張橫幅圖片嗎？');">
+        <button type="submit" class="delete-btn">刪除</button>
+      </form>
+    </div>`).join("");
+
+  const portfolioRows = portfolio.map((p, i) => `
+    <div style="display:flex; align-items:center; gap:1rem; padding:0.6rem 0; border-bottom:1px solid var(--line);">
+      <img src="/uploads/shop-portfolio/${p.id}" alt="" style="width:80px; height:80px; object-fit:cover; border:1px solid var(--line); border-radius:4px;">
+      <div style="flex:1; font-size:0.88rem; color:var(--ink-soft);">${escapeHtml(p.caption || "（無說明）")}</div>
+      <div style="display:flex; gap:0.4rem;">
+        <form method="POST" action="/admin/shop/portfolio/${p.id}/move"><input type="hidden" name="direction" value="up"><button type="submit" class="btn-outline" ${i === 0 ? "disabled" : ""}>↑</button></form>
+        <form method="POST" action="/admin/shop/portfolio/${p.id}/move"><input type="hidden" name="direction" value="down"><button type="submit" class="btn-outline" ${i === portfolio.length - 1 ? "disabled" : ""}>↓</button></form>
+      </div>
+      <form method="POST" action="/admin/shop/portfolio/${p.id}/delete" onsubmit="return confirm('確定要刪除這張作品集圖片嗎？');">
+        <button type="submit" class="delete-btn">刪除</button>
+      </form>
+    </div>`).join("");
+
+  let social = {};
+  try { social = JSON.parse(profile.SHOP_SOCIAL_LINKS || "{}"); } catch { social = {}; }
+
+  return `
+    <h1>店面設計</h1>
+    ${saved ? `<p class="success-msg">已儲存。</p>` : ""}
+    ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
+    <p style="color:var(--ink-soft); font-size:0.88rem; max-width:70ch; margin-bottom:1.5rem;">
+      這些設定會顯示在客人看到的線上預約頁（/liff/booking）上，用來展示店家資訊與作品。
+    </p>
+
+    <div class="panel" style="margin-bottom:1.5rem;">
+      <h2>店徽 Logo（顯示在橫幅圖下方的圓形頭像）</h2>
+      <p style="color:var(--ink-soft); font-size:0.8rem; margin:-0.3rem 0 0.8rem;">建議尺寸：400 x 400px（正方形），檔案 1.5MB 以內</p>
+      ${hasLogo ? `
+        <div style="display:flex; align-items:center; gap:1rem; margin-bottom:1rem;">
+          <img src="/uploads/shop-logo?v=${Date.now()}" alt="" style="width:72px; height:72px; object-fit:cover; border-radius:50%; border:1px solid var(--line);">
+          <form method="POST" action="/admin/shop/logo/delete" onsubmit="return confirm('確定要刪除 Logo 嗎？');">
+            <button type="submit" class="delete-btn">刪除 Logo</button>
+          </form>
+        </div>` : `<p class="empty">尚未上傳 Logo。</p>`}
+      <form method="POST" action="/admin/shop/logo" enctype="multipart/form-data" style="display:flex; gap:0.6rem; align-items:center;">
+        <input type="file" name="image" accept="image/png,image/jpeg,image/webp" required>
+        <button type="submit" class="btn-outline">${hasLogo ? "更換 Logo" : "上傳 Logo"}</button>
+      </form>
+    </div>
+
+    <div class="panel" style="margin-bottom:1.5rem;">
+      <h2>橫幅圖片（最多 ${maxBanners} 張，輪播顯示在預約頁最上方）</h2>
+      <p style="color:var(--ink-soft); font-size:0.8rem; margin:-0.3rem 0 0.8rem;">建議尺寸：1200 x 514px（21:9 寬扁形），檔案 1.5MB 以內</p>
+      ${bannerRows || `<p class="empty">尚未上傳橫幅圖片。</p>`}
+      ${banners.length < maxBanners ? `
+        <form method="POST" action="/admin/shop/banners" enctype="multipart/form-data" style="display:flex; gap:0.6rem; align-items:center; margin-top:1rem;">
+          <input type="file" name="image" accept="image/png,image/jpeg,image/webp" required>
+          <button type="submit" class="btn-outline">上傳橫幅圖片</button>
+        </form>` : `<p style="color:var(--ink-soft); font-size:0.82rem; margin-top:1rem;">已達上限，請先刪除一張再上傳新的。</p>`}
+    </div>
+
+    <div class="panel" style="margin-bottom:1.5rem;">
+      <h2>作品集</h2>
+      <p style="color:var(--ink-soft); font-size:0.8rem; margin:-0.3rem 0 0.8rem;">建議尺寸：800 x 800px（正方形或直式皆可），檔案 1.5MB 以內</p>
+      ${portfolioRows || `<p class="empty">尚未上傳作品集圖片。</p>`}
+      <form method="POST" action="/admin/shop/portfolio" enctype="multipart/form-data" style="display:flex; gap:0.6rem; align-items:center; margin-top:1rem; flex-wrap:wrap;">
+        <input type="file" name="image" accept="image/png,image/jpeg,image/webp" required>
+        <input type="text" name="caption" placeholder="說明（選填）" style="padding:0.6rem; border:1px solid var(--line); border-radius:4px;">
+        <button type="submit" class="btn-outline">上傳作品</button>
+      </form>
+    </div>
+
+    <div class="panel">
+      <h2>店家介紹與聯絡資訊</h2>
+      <form method="POST" action="/admin/shop/profile" class="settings-form">
+        <label>標語（顯示在預約頁標題下方）
+          <input type="text" name="tagline" value="${escapeHtml(profile.SHOP_TAGLINE || "")}" maxlength="60">
+        </label>
+        <label>公告（選填，有填才顯示跑馬燈）
+          <input type="text" name="announcement" value="${escapeHtml(profile.SHOP_ANNOUNCEMENT || "")}" maxlength="100">
+        </label>
+        <label>營業時間（選填，例如 09:00 - 21:00）
+          <input type="text" name="hours" value="${escapeHtml(profile.SHOP_HOURS || "")}" maxlength="60">
+        </label>
+        <label>聯絡電話（選填）
+          <input type="text" name="phone" value="${escapeHtml(profile.SHOP_PHONE || "")}" maxlength="30">
+        </label>
+        <label>主題色（用於按鈕與強調色）
+          <input type="color" name="themeColor" value="${escapeHtml(profile.SHOP_THEME_COLOR || "#16181c")}" style="height:2.6rem; cursor:pointer;">
+        </label>
+        <label>關於我們（選填，有填才會出現「關於我們」分頁）
+          <textarea name="about" rows="5">${escapeHtml(profile.SHOP_ABOUT || "")}</textarea>
+        </label>
+        <label>LINE 官方帳號連結（選填）
+          <input type="text" name="socialLine" value="${escapeHtml(social.line || "")}">
+        </label>
+        <label>Instagram 連結（選填）
+          <input type="text" name="socialIg" value="${escapeHtml(social.ig || "")}">
+        </label>
+        <label>Facebook 連結（選填）
+          <input type="text" name="socialFb" value="${escapeHtml(social.fb || "")}">
+        </label>
+        <button type="submit" class="btn" style="align-self:start; width:auto; padding-left:2rem; padding-right:2rem;">儲存</button>
+      </form>
+    </div>
+  `;
+}
+
+export function lineRichMenuPage({ liffId }) {
+  const bookingUrl = liffId ? `https://liff.line.me/${liffId}` : null;
+  return `
+    <h1>圖文選單</h1>
+    <p style="color:var(--ink-soft); font-size:0.88rem; max-width:70ch; margin-bottom:1.5rem;">
+      LINE 的「圖文選單」是在官方帳號聊天視窗下方顯示的一張可點擊圖片選單，客人點擊不同區塊可以觸發不同動作（開啟網址、傳送文字訊息等）。
+      這個頁面只提供設定建議，${APP_NAME}本身不會替你自動產生或套用圖文選單——實際的圖片設計與按鈕動作設定，請到 LINE 官方帳號管理後台自行操作（見下方說明）。
+    </p>
+
+    <div class="panel" style="margin-bottom:1.5rem;">
+      <h2>建議的 3 個按鈕與動作設定</h2>
+      <table>
+        <thead><tr><th>按鈕文字</th><th>動作類型</th><th>設定內容</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>線上預約</td>
+            <td>開啟網址（Open URL）</td>
+            <td>${bookingUrl ? escapeHtml(bookingUrl) : `<span style="color:#b3261e;">尚未設定 LIFF ID，請先到「第三方串接」設定後，這裡會顯示完整網址。</span>`}</td>
+          </tr>
+          <tr>
+            <td>查詢預約</td>
+            <td>傳送文字訊息（Send Text）</td>
+            <td>查詢預約</td>
+          </tr>
+          <tr>
+            <td>聯絡我們</td>
+            <td>傳送文字訊息（Send Text）</td>
+            <td>聯絡我們</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel" style="margin-bottom:1.5rem;">
+      <h2>系統目前支援的關鍵字自動回覆</h2>
+      <p style="color:var(--ink-soft); font-size:0.88rem; margin-bottom:0.8rem;">不管客人是從圖文選單點擊，還是自己手動輸入，以下關鍵字都會觸發自動回覆：</p>
+      <table>
+        <thead><tr><th>客人輸入</th><th>系統回覆</th></tr></thead>
+        <tbody>
+          <tr><td>包含「預約」的任何句子</td><td>回覆線上預約連結</td></tr>
+          <tr><td>「查詢」或「查詢預約」（完全符合）</td><td>列出目前有效（待確認／已確認）的預約，附上查看／改期／取消連結</td></tr>
+          <tr><td>「聯絡我們」（完全符合）</td><td>回覆營業時間、電話、LINE／IG／FB 等已設定的聯絡資訊</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p style="color:var(--ink-soft); font-size:0.88rem; max-width:70ch;">
+      設計好圖片、決定好按鈕範圍與動作後，請到
+      <a href="https://manager.line.biz/" target="_blank" rel="noopener">LINE 官方帳號管理後台（manager.line.biz）</a>
+      ，在左側選單找到「圖文選單」，上傳你的圖片並依照上表設定每個按鈕的動作即可。
+    </p>
+  `;
+}
+
+export function liffBookingPage(liffId, turnstileSiteKey, shop = {}) {
+  const theme = shop.themeColor || "#16181c";
+  const banners = shop.banners || [];
+  const portfolio = shop.portfolio || [];
+  const hasAbout = !!(shop.about && shop.about.trim());
+  const hasPortfolio = portfolio.length > 0;
+  const social = shop.socialLinks || {};
+  const hasSocial = !!(social.line || social.ig || social.fb);
+
+  const bannerHtml = banners.length ? `
+    <div class="shop-banner" id="shopBanner">
+      ${banners.map((b, i) => `<img src="/uploads/shop-banner/${b.id}" alt="" class="shop-banner-img${i === 0 ? " active" : ""}">`).join("")}
+      ${banners.length > 1 ? `<div class="shop-banner-dots">${banners.map((_, i) => `<span class="shop-banner-dot${i === 0 ? " active" : ""}" data-i="${i}"></span>`).join("")}</div>` : ""}
+    </div>` : "";
+
+  const logoHtml = shop.hasLogo ? `<img src="/uploads/shop-logo" alt="" class="shop-logo">` : "";
+
+  const tabs = [{ key: "services", icon: "✎", label: "服務" }];
+  if (hasAbout) tabs.push({ key: "about", icon: "◐", label: "關於我們" });
+  if (hasPortfolio) tabs.push({ key: "portfolio", icon: "▦", label: "作品集", count: portfolio.length });
+  if (hasSocial) tabs.push({ key: "contact", icon: "☎", label: "聯絡" });
+  const showTabs = tabs.length > 1;
+
+  const tabNavHtml = showTabs ? `
+    <div class="shop-tabs-wrap">
+      <div class="shop-tabs">
+        ${tabs.map((t, i) => `<button type="button" class="shop-tab${i === 0 ? " active" : ""}" data-tab="${t.key}"><span class="shop-tab-icon">${t.icon}</span>${t.label}${t.count ? `<span class="shop-tab-count">${t.count}</span>` : ""}</button>`).join("")}
+      </div>
+    </div>` : "";
+
+  const aboutPanelHtml = hasAbout ? `
+    <div class="shop-panel" id="panel-about" style="display:none;">
+      <p style="white-space:pre-wrap; color:#55585f; line-height:1.8;">${escapeHtml(shop.about)}</p>
+    </div>` : "";
+
+  const portfolioPanelHtml = hasPortfolio ? `
+    <div class="shop-panel" id="panel-portfolio" style="display:none;">
+      <div class="shop-portfolio-masonry">
+        ${portfolio.map((p) => `
+          <figure class="shop-portfolio-item">
+            <img src="/uploads/shop-portfolio/${p.id}" alt="${escapeHtml(p.caption || "")}">
+            ${p.caption ? `<figcaption>${escapeHtml(p.caption)}</figcaption>` : ""}
+          </figure>`).join("")}
+      </div>
+    </div>` : "";
+
+  const contactPanelHtml = hasSocial ? `
+    <div class="shop-panel" id="panel-contact" style="display:none;">
+      <div class="shop-social-links">
+        ${social.line ? `<a href="${escapeHtml(social.line)}" target="_blank" rel="noopener">LINE 官方帳號</a>` : ""}
+        ${social.ig ? `<a href="${escapeHtml(social.ig)}" target="_blank" rel="noopener">Instagram</a>` : ""}
+        ${social.fb ? `<a href="${escapeHtml(social.fb)}" target="_blank" rel="noopener">Facebook</a>` : ""}
+      </div>
+    </div>` : "";
+
   return `<!doctype html><html lang="zh-Hant"><head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>線上預約｜${APP_NAME}</title>
   <style>
-    body { margin:0; font-family:"Noto Sans TC","PingFang TC",sans-serif; background:#fff; color:#16181c; padding:1.5rem; }
-    h1 { font-size:1.2rem; margin-bottom:1rem; }
+    html { background:#ddd9d2; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,0.85) transparent; }
+    ::-webkit-scrollbar { width:8px; height:8px; }
+    ::-webkit-scrollbar-track { background:transparent; }
+    ::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.85); border-radius:4px; }
+    ::-webkit-scrollbar-thumb:hover { background:#fff; }
+    ::-webkit-scrollbar-button { display:none; width:0; height:0; }
+    body { margin:0 auto; max-width:560px; font-family:"Noto Sans TC","PingFang TC",sans-serif; background:#fff; color:#16181c; padding:0 0 1.5rem; box-shadow:0 0 40px rgba(0,0,0,0.06); }
+    h1 { font-size:1.3rem; margin:0 0 0.3rem; text-align:center; }
+    .shop-tagline { margin:0 0 1rem; color:#55585f; font-size:0.9rem; text-align:center; }
+    .shop-meta-row { display:flex; justify-content:center; gap:1.25rem; flex-wrap:wrap; font-size:0.82rem; color:#55585f; margin-bottom:1.25rem; }
+    .shop-meta-row span { display:inline-flex; align-items:center; gap:0.3rem; }
+    .shop-announcement-bar { background:${escapeHtml(theme)}; color:#fff; overflow:hidden; white-space:nowrap; padding:0.5rem 0; font-size:0.82rem; }
+    .shop-announcement-bar span { display:inline-block; padding-left:100%; animation:shop-marquee 18s linear infinite; }
+    @keyframes shop-marquee { 0% { transform:translateX(0); } 100% { transform:translateX(-100%); } }
     label { display:block; font-size:0.85rem; color:#55585f; margin:1rem 0 0.4rem; }
     input, select, textarea { width:100%; padding:0.7rem; border:1px solid #e4e4e0; font-size:0.95rem; box-sizing:border-box; line-height:1.4; -webkit-appearance:none; appearance:none; border-radius:0; background-color:#fff; }
     input[type=date], input[type=time] { min-height:2.9rem; }
     select { background-image:url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2355585f' stroke-width='2'%3e%3cpolyline points='6 9 12 15 18 9'/%3e%3c/svg%3e"); background-repeat:no-repeat; background-position:right 0.7rem center; background-size:1rem; padding-right:2.2rem; }
-    button { width:100%; margin-top:1.5rem; padding:0.9rem; background:#16181c; color:#fff; border:none; font-size:0.95rem; }
+    button { width:100%; margin-top:1.5rem; padding:0.9rem; background:${escapeHtml(theme)}; color:#fff; border:none; font-size:0.95rem; }
     #status { margin-top:1rem; font-size:0.88rem; }
     .slot-empty { color:#55585f; font-size:0.88rem; }
+    #bookingForm, .shop-panel { padding:0 1.5rem; }
+
+    .shop-banner { position:relative; width:100%; aspect-ratio:21/9; overflow:hidden; background:#f0f0ee; }
+    .shop-banner-img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity 0.4s ease; }
+    .shop-banner-img.active { opacity:1; }
+    .shop-banner-dots { position:absolute; left:0; right:0; bottom:0.6rem; display:flex; justify-content:center; gap:0.4rem; }
+    .shop-banner-dot { width:7px; height:7px; border-radius:50%; background:rgba(255,255,255,0.55); cursor:pointer; }
+    .shop-banner-dot.active { background:#fff; }
+
+    .shop-identity { text-align:center; margin-top:${banners.length ? "-2.75rem" : "1.5rem"}; margin-bottom:1rem; padding:0 1.5rem; position:relative; z-index:2; }
+    .shop-logo { width:84px; height:84px; border-radius:50%; object-fit:cover; border:4px solid #fff; box-shadow:0 2px 10px rgba(0,0,0,0.15); display:block; margin:0 auto 0.6rem; background:#fff; }
+
+    .shop-tabs-wrap { position:sticky; top:0; z-index:10; background:#fff; border-bottom:1px solid #e4e4e0; margin-bottom:1.25rem; }
+    .shop-tabs { display:flex; gap:0.25rem; padding:0 1.5rem; overflow-x:auto; }
+    .shop-tab { display:inline-flex; align-items:center; gap:0.35rem; border:none; background:none; padding:0.8rem 0.9rem; font-size:0.88rem; color:#55585f; cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px; white-space:nowrap; }
+    .shop-tab-icon { font-size:0.9rem; }
+    .shop-tab-count { font-size:0.72rem; background:#f0f0ee; color:#55585f; border-radius:10px; padding:0.05rem 0.45rem; }
+    .shop-tab.active { color:${escapeHtml(theme)}; border-bottom-color:${escapeHtml(theme)}; font-weight:700; }
+    .shop-tab.active .shop-tab-count { background:${escapeHtml(theme)}; color:#fff; }
+
+    .shop-portfolio-masonry { columns:2; column-gap:0.6rem; }
+    .shop-portfolio-item { margin:0 0 0.6rem; break-inside:avoid; }
+    .shop-portfolio-item img { width:100%; display:block; border-radius:4px; }
+    .shop-portfolio-item figcaption { font-size:0.78rem; color:#55585f; margin-top:0.3rem; }
+    .shop-social-links { display:flex; flex-direction:column; gap:0.75rem; }
+    .shop-social-links a { color:${escapeHtml(theme)}; text-decoration:none; font-size:0.95rem; font-weight:600; }
+
+    .addon-category { font-size:0.78rem; color:#55585f; text-transform:uppercase; letter-spacing:0.04em; margin:0.6rem 0 0.2rem; }
+    .addon-item { display:flex; align-items:center; gap:0.6rem; padding:0.55rem 0.7rem; border:1px solid #e4e4e0; border-radius:4px; cursor:pointer; font-size:0.88rem; }
+    .addon-item input { width:auto; margin:0; }
+    .addon-item .addon-name { flex:1; }
+    .addon-item .addon-price { color:${escapeHtml(theme)}; font-weight:600; white-space:nowrap; }
+
+    /* 服務卡片列表 */
+    .service-card-list { display:flex; flex-direction:column; gap:0.9rem; }
+    .service-card { border:1px solid #e4e4e0; border-radius:6px; padding:1rem; display:flex; flex-direction:column; gap:0.4rem; }
+    .service-card h3 { margin:0; font-size:1rem; }
+    .service-card p { margin:0; color:#55585f; font-size:0.85rem; line-height:1.6; }
+    .service-card-meta { display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-top:0.3rem; }
+    .service-card-price { font-weight:700; color:${escapeHtml(theme)}; font-size:1rem; }
+    .service-card-duration { color:#55585f; font-size:0.8rem; }
+    .service-card-btn { width:auto; margin:0; padding:0.55rem 1.3rem; font-size:0.85rem; border-radius:4px; }
+
+    /* 預約精靈彈窗 */
+    .booking-modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:100; display:flex; align-items:flex-end; justify-content:center; }
+    @media (min-width:640px) { .booking-modal-overlay { align-items:center; } }
+    .booking-modal { background:#fff; width:100%; max-width:480px; max-height:88vh; display:flex; flex-direction:column; border-radius:12px 12px 0 0; overflow:hidden; }
+    @media (min-width:640px) { .booking-modal { border-radius:12px; max-height:80vh; } }
+    .booking-modal-header { display:flex; align-items:center; justify-content:space-between; padding:1rem 1.25rem 0.25rem; }
+    .booking-modal-header h2 { margin:0; font-size:1.05rem; }
+    .booking-modal-close { width:auto; margin:0; background:#f0f0ee; color:#16181c; border-radius:50%; width:32px; height:32px; padding:0; font-size:1rem; line-height:1; flex-shrink:0; }
+    .booking-modal-progress { height:4px; background:#f0f0ee; margin:0.75rem 1.25rem 0; border-radius:2px; overflow:hidden; }
+    .booking-modal-progress-bar { height:100%; background:${escapeHtml(theme)}; transition:width 0.25s ease; }
+    .booking-modal-step-label { font-size:0.78rem; color:#55585f; padding:0.4rem 1.25rem 0; }
+    .booking-modal-body { flex:1; overflow-y:auto; padding:0.75rem 1.25rem 1.25rem; }
+    .booking-modal-footer { display:flex; gap:0.75rem; padding:1rem 1.25rem; border-top:1px solid #e4e4e0; }
+    .booking-modal-footer button { margin:0; }
+    .btn-secondary { background:#f0f0ee; color:#16181c; }
+
+    .wizard-stylist-card, .wizard-date-card, .wizard-time-card { border:1px solid #e4e4e0; border-radius:6px; cursor:pointer; }
+    .wizard-stylist-card { display:flex; align-items:center; gap:0.8rem; padding:0.8rem 1rem; margin-bottom:0.6rem; }
+    .wizard-stylist-card.selected { border-color:${escapeHtml(theme)}; border-width:2px; }
+    .wizard-stylist-avatar { width:44px; height:44px; border-radius:50%; object-fit:cover; background:#f0f0ee; flex-shrink:0; }
+    .wizard-stylist-info { flex:1; }
+    .wizard-stylist-name { font-weight:600; font-size:0.92rem; }
+    .wizard-stylist-bio { color:#55585f; font-size:0.78rem; margin-top:0.15rem; }
+    .wizard-check { color:${escapeHtml(theme)}; font-weight:700; }
+
+    .wizard-date-grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:0.5rem; }
+    .wizard-date-card { padding:0.6rem 0.3rem; text-align:center; font-size:0.8rem; }
+    .wizard-date-card.selected { border-color:${escapeHtml(theme)}; border-width:2px; background:#16181c; color:#fff; }
+    .wizard-date-card.selected { background:${escapeHtml(theme)}; color:#fff; }
+    .wizard-date-card .wd { color:#55585f; font-size:0.72rem; }
+    .wizard-date-card.selected .wd { color:#fff; opacity:0.85; }
+    .wizard-date-card .dd { font-weight:700; font-size:1rem; margin-top:0.1rem; }
+
+    .wizard-time-grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:0.5rem; }
+    .wizard-time-card { padding:0.7rem 0.3rem; text-align:center; font-size:0.85rem; }
+    .wizard-time-card.selected { background:${escapeHtml(theme)}; color:#fff; border-color:${escapeHtml(theme)}; }
+
+    .wizard-summary { border:1px solid #e4e4e0; border-radius:6px; padding:0.9rem 1rem; margin-bottom:1rem; font-size:0.88rem; }
+    .wizard-summary-row { display:flex; justify-content:space-between; padding:0.35rem 0; border-bottom:1px solid #f0f0ee; }
+    .wizard-summary-row:last-child { border-bottom:none; }
+    .wizard-summary-row.total { font-weight:700; font-size:0.95rem; }
+    .wizard-summary-note { color:#55585f; font-size:0.76rem; margin-top:0.4rem; }
   </style>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   ${turnstileSiteKey ? `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>` : ""}
   </head>
   <body>
-    <h1>線上預約諮詢</h1>
-    <form id="bookingForm">
-      <label>選擇預約項目</label>
-      <select name="serviceTypeId" id="serviceSelect" required><option value="">載入中...</option></select>
-      <label id="stylistLabel" style="display:none;">選擇服務人員</label>
-      <select name="stylistId" id="stylistSelect" style="display:none;" disabled><option value="">請先選擇預約項目</option></select>
-      <label>選擇日期</label>
-      <input type="date" name="date" id="dateInput" required disabled>
-      <label>選擇時段</label>
-      <select name="slotId" id="slotSelect" required disabled><option value="">請先選擇預約項目與日期</option></select>
-      <label>姓名</label>
-      <input type="text" name="name" required>
-      <label>聯絡電話</label>
-      <input type="tel" name="phone" required>
-      <label>Email（選填）</label>
-      <input type="email" name="email">
-      <label>備註需求（選填）</label>
-      <textarea name="note" rows="3"></textarea>
-      ${turnstileSiteKey ? `<div class="cf-turnstile" data-sitekey="${escapeHtml(turnstileSiteKey)}" style="margin-top:1rem;"></div>` : ""}
-      <button type="submit">送出預約</button>
-      <div id="status"></div>
-    </form>
+    ${shop.announcement ? `<div class="shop-announcement-bar"><span>📣　${escapeHtml(shop.announcement)}</span></div>` : ""}
+    ${bannerHtml}
+    <div class="shop-identity">
+      ${logoHtml}
+      <h1>線上預約諮詢</h1>
+      ${shop.tagline ? `<p class="shop-tagline">${escapeHtml(shop.tagline)}</p>` : ""}
+      ${(shop.hours || shop.phone) ? `<div class="shop-meta-row">${shop.hours ? `<span>🕐 ${escapeHtml(shop.hours)}</span>` : ""}${shop.phone ? `<span>☎ ${escapeHtml(shop.phone)}</span>` : ""}</div>` : ""}
+    </div>
+    ${tabNavHtml}
+    <div class="shop-panel" id="panel-services">
+      <div id="serviceCardList" class="service-card-list"><p class="slot-empty">載入中...</p></div>
+    </div>
+    ${aboutPanelHtml}
+    ${portfolioPanelHtml}
+    ${contactPanelHtml}
+
+    <div class="booking-modal-overlay" id="bookingModalOverlay" style="display:none;">
+      <div class="booking-modal">
+        <div class="booking-modal-header">
+          <h2 id="modalStepTitle">選擇加購</h2>
+          <button type="button" class="booking-modal-close" id="modalCloseBtn">✕</button>
+        </div>
+        <div class="booking-modal-progress"><div class="booking-modal-progress-bar" id="modalProgressBar" style="width:20%;"></div></div>
+        <div class="booking-modal-step-label" id="modalStepLabel">步驟 1 / 5</div>
+        <div class="booking-modal-body" id="modalBody"></div>
+        <div class="booking-modal-footer">
+          <button type="button" class="btn-secondary" id="modalBackBtn" style="display:none;">上一步</button>
+          <button type="button" id="modalNextBtn">下一步</button>
+        </div>
+      </div>
+    </div>
+    <script>
+      ${showTabs ? `
+      document.querySelectorAll('.shop-tab').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          document.querySelectorAll('.shop-tab').forEach(function(b) { b.classList.remove('active'); });
+          document.querySelectorAll('.shop-panel').forEach(function(p) { p.style.display = 'none'; });
+          btn.classList.add('active');
+          var panel = document.getElementById('panel-' + btn.dataset.tab);
+          if (panel) panel.style.display = '';
+        });
+      });` : ""}
+      ${banners.length > 1 ? `
+      (function() {
+        var imgs = document.querySelectorAll('.shop-banner-img');
+        var dots = document.querySelectorAll('.shop-banner-dot');
+        var current = 0;
+        function show(i) {
+          imgs.forEach(function(el, idx) { el.classList.toggle('active', idx === i); });
+          dots.forEach(function(el, idx) { el.classList.toggle('active', idx === i); });
+          current = i;
+        }
+        dots.forEach(function(dot) {
+          dot.addEventListener('click', function() { show(parseInt(dot.dataset.i, 10)); });
+        });
+        setInterval(function() { show((current + 1) % imgs.length); }, 4000);
+      })();` : ""}
+    </script>
     <script>
       const LIFF_ID = ${JSON.stringify(liffId || "")};
       let lineUserId = "";
@@ -1450,147 +2028,300 @@ export function liffBookingPage(liffId, turnstileSiteKey) {
       }
       initLiff();
 
-      const serviceSelect = document.getElementById('serviceSelect');
-      const stylistLabel = document.getElementById('stylistLabel');
-      const stylistSelect = document.getElementById('stylistSelect');
-      const dateInput = document.getElementById('dateInput');
-      const slotSelect = document.getElementById('slotSelect');
+      const TURNSTILE_SITEKEY = ${JSON.stringify(turnstileSiteKey || "")};
+      const WEEKDAY_CHARS = ['日', '一', '二', '三', '四', '五', '六'];
 
-      async function loadServices() {
+      const serviceCardList = document.getElementById('serviceCardList');
+      let servicesCache = [];
+      let addonsCache = null;
+
+      async function loadServiceCards() {
         try {
           const res = await fetch('/api/services');
           const data = await res.json();
-          if (!data.services || !data.services.length) {
-            serviceSelect.innerHTML = '<option value="">目前沒有可預約的項目</option>';
+          servicesCache = data.services || [];
+          if (!servicesCache.length) {
+            serviceCardList.innerHTML = '<p class="slot-empty">目前沒有可預約的項目</p>';
             return;
           }
-          serviceSelect.innerHTML = '<option value="">請選擇預約項目</option>' +
-            data.services.map(s => '<option value="' + s.id + '">' + s.name + '</option>').join('');
+          serviceCardList.innerHTML = servicesCache.map(function(s) {
+            return '<div class="service-card">' +
+              '<h3>' + s.name + '</h3>' +
+              (s.description ? '<p>' + s.description + '</p>' : '') +
+              '<div class="service-card-meta">' +
+                '<span class="service-card-duration">' + s.duration_minutes + ' 分鐘</span>' +
+                (s.price != null ? '<span class="service-card-price">NT$' + s.price + '</span>' : '<span></span>') +
+              '</div>' +
+              '<button type="button" class="service-card-btn" data-service-id="' + s.id + '">預約</button>' +
+            '</div>';
+          }).join('');
+          serviceCardList.querySelectorAll('.service-card-btn').forEach(function(btn) {
+            btn.addEventListener('click', function() { openWizard(parseInt(btn.dataset.serviceId, 10)); });
+          });
         } catch {
-          serviceSelect.innerHTML = '<option value="">載入失敗，請重新整理</option>';
+          serviceCardList.innerHTML = '<p class="slot-empty">載入失敗，請重新整理</p>';
         }
       }
-      loadServices();
+      loadServiceCards();
 
-      function resetDateAndSlot(keepDate) {
-        if (!keepDate) dateInput.value = '';
-        dateInput.disabled = true;
-        slotSelect.disabled = true;
-        slotSelect.innerHTML = '<option value="">請先選擇日期</option>';
+      // ---------- 預約精靈彈窗 ----------
+      const STEP_TITLES = ['選擇加購（可略過）', '選擇專業人員', '選擇日期', '選擇時段', '填寫資料'];
+      let wiz = null;
+      let turnstileWidgetId = null;
+
+      const modalOverlay = document.getElementById('bookingModalOverlay');
+      const modalBody = document.getElementById('modalBody');
+      const modalTitle = document.getElementById('modalStepTitle');
+      const modalStepLabel = document.getElementById('modalStepLabel');
+      const modalProgressBar = document.getElementById('modalProgressBar');
+      const modalBackBtn = document.getElementById('modalBackBtn');
+      const modalNextBtn = document.getElementById('modalNextBtn');
+      const modalCloseBtn = document.getElementById('modalCloseBtn');
+
+      function openWizard(serviceId) {
+        const service = servicesCache.find(function(s) { return s.id === serviceId; });
+        if (!service) return;
+        wiz = {
+          service: service, step: 1,
+          addonIds: [], addonsById: {},
+          stylistId: '', stylistName: '', stylists: [],
+          date: '', slots: [], slotId: '', slotLabel: '',
+          done: false,
+        };
+        modalOverlay.style.display = 'flex';
+        renderStep();
+      }
+      function closeWizard() {
+        modalOverlay.style.display = 'none';
+        wiz = null;
+      }
+      modalCloseBtn.addEventListener('click', closeWizard);
+      modalOverlay.addEventListener('click', function(e) { if (e.target === modalOverlay) closeWizard(); });
+
+      function renderStep() {
+        if (!wiz) return;
+        modalTitle.textContent = wiz.done ? '預約完成' : STEP_TITLES[wiz.step - 1];
+        modalStepLabel.textContent = wiz.done ? '' : ('步驟 ' + wiz.step + ' / 5');
+        modalProgressBar.style.width = wiz.done ? '100%' : ((wiz.step / 5) * 100) + '%';
+        modalBackBtn.style.display = (wiz.step > 1 && !wiz.done) ? '' : 'none';
+        modalNextBtn.style.display = wiz.done ? 'none' : '';
+        modalNextBtn.textContent = wiz.step === 5 ? '確認預約' : '下一步';
+        modalNextBtn.disabled = false;
+
+        if (wiz.done) { return; }
+        if (wiz.step === 1) renderAddonsStep();
+        else if (wiz.step === 2) renderStylistStep();
+        else if (wiz.step === 3) renderDateStep();
+        else if (wiz.step === 4) renderTimeStep();
+        else if (wiz.step === 5) renderDetailsStep();
       }
 
-      async function loadSlotsForCurrentDate() {
-        if (!dateInput.value || !serviceSelect.value) return;
-        slotSelect.disabled = true;
-        slotSelect.innerHTML = '<option value="">載入中...</option>';
-        let url = '/api/booking/slots?date=' + dateInput.value + '&serviceTypeId=' + serviceSelect.value;
-        if (stylistSelect.value) url += '&stylistId=' + stylistSelect.value;
-        const res = await fetch(url);
-        const data = await res.json();
-        if (!data.slots || !data.slots.length) {
-          slotSelect.innerHTML = '<option value="">這天沒有可預約時段</option>';
+      async function renderAddonsStep() {
+        if (addonsCache === null) {
+          modalBody.innerHTML = '<p class="slot-empty">載入中...</p>';
+          try {
+            const res = await fetch('/api/addons');
+            const data = await res.json();
+            addonsCache = data.addons || [];
+          } catch { addonsCache = []; }
+          if (!wiz || wiz.step !== 1) return;
+        }
+        if (!addonsCache.length) {
+          modalBody.innerHTML = '<p class="slot-empty">目前沒有加購項目，直接下一步即可。</p>';
           return;
         }
-        slotSelect.disabled = false;
-        slotSelect.innerHTML = data.slots.map(s =>
-          '<option value="' + s.id + '">' + s.slot_time + (s.stylist_name ? '・' + s.stylist_name : '') + '（剩 ' + (s.capacity - s.booked_count) + ' 位）</option>'
-        ).join('');
-      }
-
-      let stylistsById = {};
-
-      function maxDateStr(daysAhead) {
-        const d = new Date();
-        d.setDate(d.getDate() + daysAhead);
-        return d.toISOString().slice(0, 10);
-      }
-
-      function applyDateMax() {
-        const s = stylistsById[stylistSelect.value];
-        if (s && s.max_advance_days) {
-          dateInput.max = maxDateStr(s.max_advance_days);
-        } else {
-          dateInput.removeAttribute('max');
+        const byCategory = {};
+        const noCategory = [];
+        addonsCache.forEach(function(a) {
+          wiz.addonsById[a.id] = a;
+          if (a.category) { (byCategory[a.category] = byCategory[a.category] || []).push(a); }
+          else noCategory.push(a);
+        });
+        function item(a) {
+          const checked = wiz.addonIds.indexOf(a.id) !== -1;
+          return '<label class="addon-item"><input type="checkbox" value="' + a.id + '" ' + (checked ? 'checked' : '') + '>' +
+            '<span class="addon-name">' + a.name + '</span><span class="addon-price">NT$' + a.price + '</span></label>';
         }
+        let html = '';
+        Object.keys(byCategory).forEach(function(cat) {
+          html += '<div class="addon-category">' + cat + '</div>' + byCategory[cat].map(item).join('');
+        });
+        if (noCategory.length) html += noCategory.map(item).join('');
+        modalBody.innerHTML = html;
+        modalBody.querySelectorAll('input[type=checkbox]').forEach(function(cb) {
+          cb.addEventListener('change', function() {
+            const id = parseInt(cb.value, 10);
+            if (cb.checked) { if (wiz.addonIds.indexOf(id) === -1) wiz.addonIds.push(id); }
+            else { wiz.addonIds = wiz.addonIds.filter(function(x) { return x !== id; }); }
+          });
+        });
       }
 
-      serviceSelect.addEventListener('change', async () => {
-        const keptDate = dateInput.value;
-        resetDateAndSlot(true);
-        dateInput.removeAttribute('max');
-        stylistLabel.style.display = 'none';
-        stylistSelect.style.display = 'none';
-        stylistSelect.value = '';
-        stylistsById = {};
-        if (!serviceSelect.value) { dateInput.value = ''; return; }
-
-        stylistSelect.disabled = true;
-        stylistSelect.innerHTML = '<option value="">載入中...</option>';
+      async function renderStylistStep() {
+        modalBody.innerHTML = '<p class="slot-empty">載入中...</p>';
         try {
-          const res = await fetch('/api/stylists?serviceTypeId=' + serviceSelect.value);
+          const res = await fetch('/api/stylists?serviceTypeId=' + wiz.service.id);
           const data = await res.json();
-          if (data.stylists && data.stylists.length) {
-            data.stylists.forEach(s => { stylistsById[s.id] = s; });
-            stylistLabel.style.display = '';
-            stylistSelect.style.display = '';
-            stylistSelect.disabled = false;
-            stylistSelect.innerHTML = '<option value="">不指定（任何服務人員皆可）</option>' +
-              data.stylists.map(s => '<option value="' + s.id + '">' + s.name + '</option>').join('');
-          } else {
-            dateInput.disabled = false;
-          }
-        } catch {
-          dateInput.disabled = false;
+          wiz.stylists = data.stylists || [];
+        } catch { wiz.stylists = []; }
+        if (!wiz || wiz.step !== 2) return;
+        if (!wiz.stylists.length) {
+          wiz.stylistId = ''; wiz.stylistName = '';
+          modalBody.innerHTML = '<p class="slot-empty">這項服務不需要指定服務人員，直接下一步即可。</p>';
+          return;
         }
+        if (!wiz.stylistId && wiz.stylistId !== 0) wiz.stylistId = ''; // 預設「不指定」
+        renderStylistCards();
+      }
+      function renderStylistCards() {
+        const cards = [{ id: '', name: '不指定專業人員', bio: '系統自動分配', has_photo: false }].concat(wiz.stylists);
+        modalBody.innerHTML = cards.map(function(s) {
+          const selected = (wiz.stylistId === s.id) || (wiz.stylistId === '' && s.id === '');
+          const avatar = s.has_photo ? '<img class="wizard-stylist-avatar" src="/uploads/stylist-photo/' + s.id + '">' : '<div class="wizard-stylist-avatar"></div>';
+          return '<div class="wizard-stylist-card' + (selected ? ' selected' : '') + '" data-id="' + s.id + '">' +
+            avatar +
+            '<div class="wizard-stylist-info"><div class="wizard-stylist-name">' + s.name + '</div>' +
+            (s.bio ? '<div class="wizard-stylist-bio">' + s.bio + '</div>' : '') + '</div>' +
+            (selected ? '<span class="wizard-check">✓</span>' : '') +
+          '</div>';
+        }).join('');
+        modalBody.querySelectorAll('.wizard-stylist-card').forEach(function(card) {
+          card.addEventListener('click', function() {
+            const idRaw = card.dataset.id;
+            wiz.stylistId = idRaw === '' ? '' : parseInt(idRaw, 10);
+            const found = wiz.stylists.find(function(s) { return s.id === wiz.stylistId; });
+            wiz.stylistName = found ? found.name : '';
+            renderStylistCards();
+          });
+        });
+      }
 
-        applyDateMax();
-        if (keptDate && (!dateInput.max || keptDate <= dateInput.max)) {
-          dateInput.value = keptDate;
-          await loadSlotsForCurrentDate();
+      function maxAdvanceDaysForWiz() {
+        const found = wiz.stylists.find(function(s) { return s.id === wiz.stylistId; });
+        return (found && found.max_advance_days) || 60;
+      }
+
+      function renderDateStep() {
+        const maxDays = maxAdvanceDaysForWiz();
+        const today = new Date();
+        let html = '<div class="wizard-date-grid">';
+        for (let i = 0; i < maxDays; i++) {
+          const d = new Date(today); d.setDate(d.getDate() + i);
+          const dateStr = d.toISOString().slice(0, 10);
+          const selected = wiz.date === dateStr;
+          html += '<div class="wizard-date-card' + (selected ? ' selected' : '') + '" data-date="' + dateStr + '">' +
+            '<div class="wd">週' + WEEKDAY_CHARS[d.getDay()] + '</div><div class="dd">' + (d.getMonth() + 1) + '/' + d.getDate() + '</div>' +
+          '</div>';
         }
-      });
+        html += '</div>';
+        modalBody.innerHTML = html;
+        modalBody.querySelectorAll('.wizard-date-card').forEach(function(card) {
+          card.addEventListener('click', function() {
+            wiz.date = card.dataset.date;
+            modalBody.querySelectorAll('.wizard-date-card').forEach(function(c) { c.classList.remove('selected'); });
+            card.classList.add('selected');
+          });
+        });
+      }
 
-      stylistSelect.addEventListener('change', async () => {
-        dateInput.disabled = false;
-        applyDateMax();
-        if (dateInput.value && (!dateInput.max || dateInput.value <= dateInput.max)) {
-          await loadSlotsForCurrentDate();
+      async function renderTimeStep() {
+        modalBody.innerHTML = '<p class="slot-empty">載入中...</p>';
+        try {
+          let url = '/api/booking/slots?date=' + wiz.date + '&serviceTypeId=' + wiz.service.id;
+          if (wiz.stylistId) url += '&stylistId=' + wiz.stylistId;
+          const res = await fetch(url);
+          const data = await res.json();
+          wiz.slots = data.slots || [];
+        } catch { wiz.slots = []; }
+        if (!wiz || wiz.step !== 4) return;
+        if (!wiz.slots.length) {
+          modalBody.innerHTML = '<p class="slot-empty">這天沒有可預約時段，請返回上一步選擇其他日期。</p>';
+          return;
         }
-      });
+        modalBody.innerHTML = '<div class="wizard-time-grid">' + wiz.slots.map(function(s) {
+          const selected = wiz.slotId === s.id;
+          return '<div class="wizard-time-card' + (selected ? ' selected' : '') + '" data-id="' + s.id + '" data-time="' + s.slot_time + (s.stylist_name ? '・' + s.stylist_name : '') + '">' + s.slot_time + '</div>';
+        }).join('') + '</div>';
+        modalBody.querySelectorAll('.wizard-time-card').forEach(function(card) {
+          card.addEventListener('click', function() {
+            wiz.slotId = card.dataset.id;
+            wiz.slotLabel = card.dataset.time;
+            modalBody.querySelectorAll('.wizard-time-card').forEach(function(c) { c.classList.remove('selected'); });
+            card.classList.add('selected');
+          });
+        });
+      }
 
-      dateInput.addEventListener('change', loadSlotsForCurrentDate);
+      function renderDetailsStep() {
+        const addonRows = wiz.addonIds.map(function(id) { return wiz.addonsById[id]; }).filter(Boolean);
+        const addonTotal = addonRows.reduce(function(sum, a) { return sum + a.price; }, 0);
+        const servicePrice = wiz.service.price != null ? wiz.service.price : 0;
+        const total = servicePrice + addonTotal;
+        let html = '<div class="wizard-summary">';
+        html += '<div class="wizard-summary-row"><span>服務項目</span><span>' + wiz.service.name + '</span></div>';
+        if (wiz.stylistName) html += '<div class="wizard-summary-row"><span>專業人員</span><span>' + wiz.stylistName + '</span></div>';
+        html += '<div class="wizard-summary-row"><span>預約日期</span><span>' + wiz.date + '</span></div>';
+        html += '<div class="wizard-summary-row"><span>預約時段</span><span>' + wiz.slotLabel + '</span></div>';
+        if (wiz.service.price != null) html += '<div class="wizard-summary-row"><span>費用</span><span>NT$' + servicePrice + '</span></div>';
+        addonRows.forEach(function(a) {
+          html += '<div class="wizard-summary-row"><span>加購：' + a.name + '</span><span>NT$' + a.price + '</span></div>';
+        });
+        if (wiz.service.price != null || addonRows.length) {
+          html += '<div class="wizard-summary-row total"><span>總計</span><span>NT$' + total + '</span></div>';
+        }
+        html += '</div>';
+        html += '<label>姓名 *</label><input type="text" id="wizName" required>';
+        html += '<label>聯絡電話 *</label><input type="tel" id="wizPhone" required>';
+        html += '<label>Email（選填）</label><input type="email" id="wizEmail">';
+        html += '<label>備註需求（選填）</label><textarea id="wizNote" rows="3"></textarea>';
+        if (TURNSTILE_SITEKEY) html += '<div id="turnstileContainer" style="margin-top:1rem;"></div>';
+        html += '<p id="wizStatus" style="margin-top:0.8rem; font-size:0.85rem;"></p>';
+        modalBody.innerHTML = html;
 
-      document.getElementById('bookingForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const form = e.target;
-        const statusEl = document.getElementById('status');
+        if (TURNSTILE_SITEKEY) {
+          const renderTurnstile = function() {
+            if (window.turnstile) turnstileWidgetId = turnstile.render('#turnstileContainer', { sitekey: TURNSTILE_SITEKEY });
+            else setTimeout(renderTurnstile, 300);
+          };
+          renderTurnstile();
+        }
+      }
+
+      async function submitBooking() {
+        const statusEl = document.getElementById('wizStatus');
+        const name = document.getElementById('wizName').value.trim();
+        const phone = document.getElementById('wizPhone').value.trim();
+        const email = document.getElementById('wizEmail').value.trim();
+        const note = document.getElementById('wizNote').value.trim();
+        if (!name || !phone) {
+          statusEl.textContent = '請填寫姓名與電話。';
+          return;
+        }
+        modalNextBtn.disabled = true;
         statusEl.textContent = '送出中...';
-        const turnstileToken = (document.querySelector('[name="cf-turnstile-response"]') || {}).value || '';
+        const turnstileToken = turnstileWidgetId !== null && window.turnstile ? turnstile.getResponse(turnstileWidgetId) : '';
         const payload = {
-          slotId: form.slotId.value,
-          name: form.name.value,
-          phone: form.phone.value,
-          email: form.email.value,
-          note: form.note.value,
-          lineUserId,
-          lineDisplayName,
-          turnstileToken,
+          slotId: wiz.slotId, name, phone, email, note,
+          lineUserId, lineDisplayName, turnstileToken,
+          addonIds: wiz.addonIds,
         };
         try {
           const res = await fetch('/api/booking', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
           });
           const result = await res.json();
           if (res.ok && result.ok) {
-            statusEl.innerHTML = '預約成功！我們會盡快與您聯繫確認。' +
-              (result.manageUrl ? '<br><a href="' + result.manageUrl + '" target="_blank" style="color:#1f6f5c;">點此查看／取消／更改我的預約</a>' : '');
-            form.reset();
-            if (window.turnstile) turnstile.reset();
+            wiz.done = true;
+            modalBody.innerHTML = '<p>預約成功！我們會盡快與您聯繫確認。</p>' +
+              (result.manageUrl ? '<p><a href="' + result.manageUrl + '" target="_blank" style="color:${escapeHtml(theme)};">點此查看／取消／更改我的預約</a></p>' : '');
+            modalTitle.textContent = '預約完成';
+            modalStepLabel.textContent = '';
+            modalProgressBar.style.width = '100%';
+            modalBackBtn.style.display = 'none';
+            modalNextBtn.style.display = 'none';
           } else {
             const errMsg = {
-              slot_full: '很抱歉，這個時段剛好被約滿了，請選擇其他時段。',
+              slot_full: '很抱歉，這個時段剛好被約滿了，請返回上一步選擇其他時段。',
               too_late_to_book: '這個時段已經太接近，無法預約，請選擇較晚的時段。',
               slot_not_found: '選擇的時段無效，請重新選擇。',
               missing_fields: '請完整填寫必填欄位。',
@@ -1599,11 +2330,27 @@ export function liffBookingPage(liffId, turnstileSiteKey) {
               blocked: '很抱歉，目前無法為此帳號受理線上預約，請直接與我們聯繫。',
             }[result.error] || result.error || '請稍後再試';
             statusEl.textContent = '預約失敗：' + errMsg;
-            if (window.turnstile) turnstile.reset();
+            modalNextBtn.disabled = false;
+            if (window.turnstile && turnstileWidgetId !== null) turnstile.reset(turnstileWidgetId);
           }
         } catch {
           statusEl.textContent = '預約失敗，請稍後再試。';
+          modalNextBtn.disabled = false;
         }
+      }
+
+      modalBackBtn.addEventListener('click', function() {
+        if (!wiz || wiz.step <= 1) return;
+        wiz.step -= 1;
+        renderStep();
+      });
+      modalNextBtn.addEventListener('click', function() {
+        if (!wiz) return;
+        if (wiz.step === 3 && !wiz.date) return;
+        if (wiz.step === 4 && !wiz.slotId) return;
+        if (wiz.step === 5) { submitBooking(); return; }
+        wiz.step += 1;
+        renderStep();
       });
     </script>
   </body></html>`;
