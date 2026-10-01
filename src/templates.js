@@ -1892,7 +1892,7 @@ export function liffBookingPage(liffId, turnstileSiteKey, shop = {}) {
 
     .addon-category { font-size:0.78rem; color:#55585f; text-transform:uppercase; letter-spacing:0.04em; margin:0.6rem 0 0.2rem; }
     .addon-item { display:flex; align-items:center; gap:0.6rem; padding:0.55rem 0.7rem; border:1px solid #e4e4e0; border-radius:4px; cursor:pointer; font-size:0.88rem; }
-    .addon-item input { width:auto; margin:0; }
+    .addon-item input[type=checkbox] { width:1.1rem; height:1.1rem; flex-shrink:0; margin:0; -webkit-appearance:checkbox; appearance:checkbox; accent-color:${escapeHtml(theme)}; }
     .addon-item .addon-name { flex:1; }
     .addon-item .addon-price { color:${escapeHtml(theme)}; font-weight:600; white-space:nowrap; }
 
